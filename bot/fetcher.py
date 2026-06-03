@@ -92,9 +92,13 @@ def _pubmed_doi(article: dict) -> str:
 def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
     since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
+    # Restrict to biomedical / quantitative biology categories to avoid
+    # irrelevant CS / engineering papers that mention "brain" incidentally
+    biomedical_query = f"(cat:q-bio OR cat:eess.SP) AND ({keyword})"
+
     client = arxiv.Client()
     search = arxiv.Search(
-        query=keyword,
+        query=biomedical_query,
         max_results=max_results,
         sort_by=arxiv.SortCriterion.SubmittedDate,
         sort_order=arxiv.SortOrder.Descending,

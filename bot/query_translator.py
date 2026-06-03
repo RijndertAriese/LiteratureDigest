@@ -7,7 +7,6 @@ import json
 import os
 
 from google import genai
-from google.genai import types
 
 _SYSTEM_PROMPT = """\
 You are a scientific literature search expert.
@@ -47,13 +46,10 @@ def translate_topic(topic: str) -> dict:
         return _fallback(topic)
 
     try:
-        client = genai.Client(api_key=api_key, http_options={"api_version": "v1"})
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model="gemini-1.5-flash",
-            contents=f'Topic: "{topic}"',
-            config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-            ),
+            contents=f"{_SYSTEM_PROMPT}\n\nTopic: \"{topic}\"",
         )
         text = response.text.strip()
 
