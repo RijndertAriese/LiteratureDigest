@@ -138,13 +138,14 @@ def _pubmed_exact_publication_date(article: dict) -> datetime.date | None:
         return None
 
 
-def _parse_pubmed_date(year: str, month: str, day: str) -> datetime.date | None:
-    if not year or not month or not day:
+def _parse_pubmed_date(year: str, month: str, day: str = "1") -> datetime.date | None:
+    """Parse a PubMed date tuple. Day defaults to 1 when absent (common in PubMed records)."""
+    if not year or not month:
         return None
 
     try:
         year_num = int(year)
-        day_num = int(day)
+        day_num = int(day) if day else 1
     except ValueError:
         return None
 
