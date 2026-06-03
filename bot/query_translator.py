@@ -6,7 +6,8 @@ using Gemini Flash. Falls back to the raw topic string if the API key is absent.
 import json
 import os
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 _SYSTEM_PROMPT = """\
 You are a scientific literature search expert.
@@ -46,12 +47,14 @@ def translate_topic(topic: str) -> dict:
         return _fallback(topic)
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=_SYSTEM_PROMPT,
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=f'Topic: "{topic}"',
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+            ),
         )
-        response = model.generate_content(f'Topic: "{topic}"')
         text = response.text.strip()
 
         # strip accidental markdown fences
