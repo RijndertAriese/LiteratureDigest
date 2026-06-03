@@ -48,29 +48,34 @@ def translate_topic(topic: str) -> dict:
     try:
         client = genai.Client(api_key=api_key)
 
-        # Try models in order — availability varies by region and account tier
-        _models = [
+        # Discover which models are actually available on this account/region
+        available = {
+            m.name.split("/")[-1]
+            for m in client.models.list()
+            if "generateContent" in (getattr(m, "supported_actions", None) or [])
+        }
+        print(f"[translate] available models: {sorted(available)}")
+
+        # Prefer lightweight flash models; fall back down the list
+        _preference = [
             "gemini-2.0-flash-lite",
             "gemini-1.5-flash",
             "gemini-1.5-flash-8b",
             "gemini-2.0-flash",
+            "gemini-2.5-flash-preview-05-20",
         ]
-        response = None
-        last_error = None
-        for model_name in _models:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=f"{_SYSTEM_PROMPT}\n\nTopic: \"{topic}\"",
-                )
-                print(f"[translate] using model: {model_name}")
-                break
-            except Exception as model_err:
-                print(f"[translate] {model_name} unavailable: {model_err}")
-                last_error = model_err
+        model_name = next(
+            (m for m in _preference if m in available),
+            next(iter(m for m in available if "flash" in m), None),
+        )
+        if not model_name:
+            raise RuntimeError("No usable Gemini model found on this account")
 
-        if response is None:
-            raise last_error
+        print(f"[translate] using model: {model_name}")
+        response = client.models.generate_content(
+            model=model_name,
+            contents=f"{_SYSTEM_PROMPT}\n\nTopic: \"{topic}\"",
+        )
 
         text = response.text.strip()
 
