@@ -23,7 +23,13 @@ def _date_n_days_ago(n: int) -> datetime.date:
 
 def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
     since = _date_n_days_ago(days).strftime("%Y/%m/%d")
-    query = f'({keyword}) AND ("{since}"[Date - Publication] : "3000"[Date - Publication])'
+    today = datetime.date.today().strftime("%Y/%m/%d")
+
+    # Use [Date - Entrez] (when PubMed indexed the paper) instead of
+    # [Date - Publication] (journal issue date). This correctly excludes
+    # papers with future issue dates (e.g. "2026 Dec" for a Jan epub)
+    # while including genuinely new epub-ahead-of-print papers.
+    query = f'({keyword}) AND ("{since}"[Date - Entrez] : "{today}"[Date - Entrez])'
 
     handle = Entrez.esearch(db="pubmed", term=query, retmax=max_results, sort="pub_date")
     record = Entrez.read(handle)
