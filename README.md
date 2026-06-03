@@ -29,6 +29,9 @@ For PubMed, the bot filters by exact electronic/publication date from the
 fetched XML record. PubMed indexing dates are used only to find candidates, so
 older papers that were merely indexed recently are excluded from the digest.
 
+arXiv requests use a shared throttled client to avoid API rate limits across
+multiple configured topics.
+
 ## Required GitHub Secrets
 
 Set these in **repo → Settings → Secrets → Actions**:

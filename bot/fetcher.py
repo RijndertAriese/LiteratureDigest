@@ -14,6 +14,23 @@ NCBI_API_KEY = os.environ.get("NCBI_API_KEY")
 if NCBI_API_KEY:
     Entrez.api_key = NCBI_API_KEY
 
+_ARXIV_TIMEOUT_SECONDS = 20
+
+
+class _TimeoutSession(requests.Session):
+    def request(self, method: str, url: str, **kwargs):
+        kwargs.setdefault("timeout", _ARXIV_TIMEOUT_SECONDS)
+        return super().request(method, url, **kwargs)
+
+
+def _make_arxiv_client() -> arxiv.Client:
+    client = arxiv.Client(page_size=25, delay_seconds=10.0, num_retries=6)
+    client._session = _TimeoutSession()
+    return client
+
+
+_ARXIV_CLIENT = _make_arxiv_client()
+
 
 def _date_n_days_ago(n: int) -> datetime.date:
     return datetime.date.today() - datetime.timedelta(days=n)
@@ -189,7 +206,6 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
 
     query = _ensure_arxiv_category(keyword)
 
-    client = arxiv.Client()
     search = arxiv.Search(
         query=query,
         max_results=max_results,
@@ -198,7 +214,7 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
     )
 
     papers = []
-    for result in client.results(search):
+    for result in _ARXIV_CLIENT.results(search):
         if result.published < since:
             break
         papers.append({
@@ -280,6 +296,19 @@ def _ensure_arxiv_category(query: str) -> str:
     return f"(cat:q-bio OR cat:eess.SP) AND ({query})"
 
 
+def _fetch_warning(source_name: str, display: str, error: Exception) -> str:
+    detail = str(error)
+    if source_name == "fetch_arxiv":
+        if "HTTP 429" in detail:
+            detail = (
+                "arXiv rate limited the request (HTTP 429); "
+                "try again later or reduce max_results_per_source"
+            )
+        elif isinstance(error, requests.exceptions.Timeout):
+            detail = "arXiv request timed out; try again later"
+    return f"{source_name} failed for '{display}': {detail}"
+
+
 def fetch_all(queries: dict, days: int, max_results: int) -> tuple[list[dict], list[str]]:
     """
     queries: dict with keys "pubmed", "arxiv", "biorxiv" — one optimised
@@ -302,7 +331,7 @@ def fetch_all(queries: dict, days: int, max_results: int) -> tuple[list[dict], l
             batch = fn(query, days, max_results)
             results.extend(batch)
         except Exception as e:
-            msg = f"{fn.__name__} failed for '{queries.get('display', query)}': {e}"
+            msg = _fetch_warning(fn.__name__, queries.get("display", query), e)
             print(f"[warn] {msg}")
             warnings.append(msg)
 
