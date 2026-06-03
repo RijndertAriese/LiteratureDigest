@@ -1,0 +1,9 @@
+topics:
+  - "myeloid cells in brain cancers"
+  - "neuroblastoma metabolism"
+
+interval_days: 7
+
+max_results_per_source: 25
+
+recipient_email: "your@email.com"  # override with RECIPIENT_EMAIL secret
