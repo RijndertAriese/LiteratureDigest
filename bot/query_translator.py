@@ -49,7 +49,7 @@ def translate_topic(topic: str) -> dict:
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=f'Topic: "{topic}"',
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM_PROMPT,

@@ -1,4 +1,6 @@
 import datetime
+import re
+from html import unescape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -57,10 +59,16 @@ def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str) -> No
     doc.build(story)
 
 
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and unescape entities (e.g. from PubMed abstracts)."""
+    text = re.sub(r'<[^>]+>', '', text)
+    return unescape(text).strip()
+
+
 def _paper_block(paper: dict, index: int, styles: dict) -> list:
     elements = []
 
-    title = paper.get("title", "Untitled")
+    title = _strip_html(paper.get("title", "Untitled"))
     elements.append(Paragraph(f"{index}. {title}", styles["paper_title"]))
 
     ref = _format_reference(paper)
@@ -74,7 +82,7 @@ def _paper_block(paper: dict, index: int, styles: dict) -> list:
         source_text = source_badge
     elements.append(Paragraph(source_text, styles["source"]))
 
-    abstract = paper.get("abstract", "").strip()
+    abstract = _strip_html(paper.get("abstract", ""))
     if abstract:
         if len(abstract) > 800:
             abstract = abstract[:797] + "..."
@@ -86,10 +94,10 @@ def _paper_block(paper: dict, index: int, styles: dict) -> list:
 
 
 def _format_reference(paper: dict) -> str:
-    authors = paper.get("authors", "")
+    authors = _strip_html(paper.get("authors", ""))
     date = paper.get("date", "")
-    title = paper.get("title", "")
-    journal = paper.get("journal", "")
+    title = _strip_html(paper.get("title", ""))
+    journal = _strip_html(paper.get("journal", ""))
     doi = paper.get("doi", "")
 
     parts = []
