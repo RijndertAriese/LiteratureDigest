@@ -27,5 +27,6 @@ jobs:
           SENDGRID_SENDER_EMAIL: ${{ secrets.SENDGRID_SENDER_EMAIL }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NCBI_EMAIL: ${{ secrets.NCBI_EMAIL }}       # optional
           NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}   # optional
         run: python -m bot.main

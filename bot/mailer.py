@@ -1,6 +1,7 @@
 import base64
 import datetime
 import os
+from html import escape
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import (
     Mail, Attachment, FileContent, FileName, FileType, Disposition
@@ -16,7 +17,7 @@ def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[
 
     warning_block = ""
     if warnings:
-        items = "".join(f"<li>{w}</li>" for w in warnings)
+        items = "".join(f"<li>{escape(w)}</li>" for w in warnings)
         warning_block = (
             f"<p><b>⚠ {len(warnings)} source(s) failed to fetch</b> — "
             f"results may be incomplete:<ul>{items}</ul></p>"

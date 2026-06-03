@@ -11,7 +11,7 @@ A weekly literature digest bot that searches PubMed, arXiv, and bioRxiv for new 
 
 ## Configuration
 
-Edit `config.yaml` to set your topics and schedule:
+Edit `config.yaml` to set your topics and search interval:
 
 ```yaml
 topics:
@@ -34,7 +34,8 @@ Set these in **repo → Settings → Secrets → Actions**:
 | `SENDGRID_API_KEY` | SendGrid API key (Mail Send permission only) |
 | `SENDGRID_SENDER_EMAIL` | Verified sender email in SendGrid |
 | `RECIPIENT_EMAIL` | Where to send the digest |
-| `GROQ_API_KEY` | Groq API key (free at console.groq.com) |
+| `GROQ_API_KEY` | *(recommended)* Enables query translation; raw topics are used if absent |
+| `NCBI_EMAIL` | *(optional)* PubMed contact email; defaults to `SENDGRID_SENDER_EMAIL` |
 | `NCBI_API_KEY` | *(optional)* Raises PubMed rate limit |
 
 ## Schedule
