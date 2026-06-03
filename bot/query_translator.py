@@ -47,10 +47,31 @@ def translate_topic(topic: str) -> dict:
 
     try:
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=f"{_SYSTEM_PROMPT}\n\nTopic: \"{topic}\"",
-        )
+
+        # Try models in order — availability varies by region and account tier
+        _models = [
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-2.0-flash",
+        ]
+        response = None
+        last_error = None
+        for model_name in _models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=f"{_SYSTEM_PROMPT}\n\nTopic: \"{topic}\"",
+                )
+                print(f"[translate] using model: {model_name}")
+                break
+            except Exception as model_err:
+                print(f"[translate] {model_name} unavailable: {model_err}")
+                last_error = model_err
+
+        if response is None:
+            raise last_error
+
         text = response.text.strip()
 
         # strip accidental markdown fences
