@@ -7,18 +7,27 @@ from sendgrid.helpers.mail import (
 )
 
 
-def send_digest(pdf_path: str, recipient: str, paper_count: int) -> None:
+def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[str] | None = None) -> None:
     api_key = os.environ["SENDGRID_API_KEY"]
     sender = os.environ["SENDGRID_SENDER_EMAIL"]
 
     today = datetime.date.today().strftime("%B %d, %Y")
     subject = f"Literature Digest — {today} ({paper_count} new paper{'s' if paper_count != 1 else ''})"
 
+    warning_block = ""
+    if warnings:
+        items = "".join(f"<li>{w}</li>" for w in warnings)
+        warning_block = (
+            f"<p><b>⚠ {len(warnings)} source(s) failed to fetch</b> — "
+            f"results may be incomplete:<ul>{items}</ul></p>"
+        )
+
     body = (
         f"<p>Hi,</p>"
         f"<p>Your literature digest for <b>{today}</b> is attached. "
         f"It contains <b>{paper_count}</b> new paper{'s' if paper_count != 1 else ''} "
         f"from PubMed, arXiv, and bioRxiv.</p>"
+        f"{warning_block}"
         f"<p>— Literature Bot</p>"
     )
 

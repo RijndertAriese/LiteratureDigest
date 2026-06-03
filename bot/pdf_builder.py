@@ -11,7 +11,7 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 
-def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str) -> None:
+def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str, warnings: list[str] | None = None) -> None:
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -34,6 +34,16 @@ def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str) -> No
         f"Found <b>{total}</b> new papers across {len(results_by_keyword)} keyword(s).",
         styles["body"]
     ))
+    if warnings:
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(Paragraph(
+            f"<b>⚠ {len(warnings)} source(s) failed to fetch</b> — results may be incomplete.",
+            styles["body"]
+        ))
+        for w in warnings:
+            story.append(Paragraph(f"&nbsp;&nbsp;• {_strip_html(w)}", styles["source"]))
+        story.append(Spacer(1, 0.4 * cm))
+
     story.append(Spacer(1, 0.8 * cm))
 
     for keyword, papers in results_by_keyword.items():
@@ -60,9 +70,13 @@ def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str) -> No
 
 
 def _strip_html(text: str) -> str:
-    """Remove HTML tags and unescape entities (e.g. from PubMed abstracts)."""
-    text = re.sub(r'<[^>]+>', '', text)
-    return unescape(text).strip()
+    """Remove HTML tags, unescape entities, then re-escape XML-special chars
+    so ReportLab's paragraph parser never sees bare & < > in plain text."""
+    text = re.sub(r'<[^>]+>', '', text)      # strip tags
+    text = unescape(text).strip()            # decode &amp; &lt; etc.
+    # re-escape for ReportLab XML parser (but don't double-escape)
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    return text
 
 
 def _paper_block(paper: dict, index: int, styles: dict) -> list:

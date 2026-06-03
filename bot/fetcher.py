@@ -92,13 +92,11 @@ def _pubmed_doi(article: dict) -> str:
 def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
     since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
-    # Restrict to biomedical / quantitative biology categories to avoid
-    # irrelevant CS / engineering papers that mention "brain" incidentally
-    biomedical_query = f"(cat:q-bio OR cat:eess.SP) AND ({keyword})"
-
+    # The query_translator already adds cat: restrictions; we use it as-is.
+    # (The _fallback in query_translator also adds cat:q-bio for safety.)
     client = arxiv.Client()
     search = arxiv.Search(
-        query=biomedical_query,
+        query=keyword,
         max_results=max_results,
         sort_by=arxiv.SortCriterion.SubmittedDate,
         sort_order=arxiv.SortOrder.Descending,
@@ -181,10 +179,12 @@ def _format_authors(names: list[str]) -> str:
     return f"{names[0]}, {names[1]}, {names[2]} et al."
 
 
-def fetch_all(queries: dict, days: int, max_results: int) -> list[dict]:
+def fetch_all(queries: dict, days: int, max_results: int) -> tuple[list[dict], list[str]]:
     """
     queries: dict with keys "pubmed", "arxiv", "biorxiv" — one optimised
              search string per source, as produced by query_translator.
+
+    Returns (papers, warnings) so callers can surface fetch failures in the digest.
     """
     source_fns = [
         (fetch_pubmed,  queries.get("pubmed",  queries.get("display", ""))),
@@ -193,6 +193,7 @@ def fetch_all(queries: dict, days: int, max_results: int) -> list[dict]:
     ]
 
     results = []
+    warnings = []
     for fn, query in source_fns:
         if not query:
             continue
@@ -200,7 +201,9 @@ def fetch_all(queries: dict, days: int, max_results: int) -> list[dict]:
             batch = fn(query, days, max_results)
             results.extend(batch)
         except Exception as e:
-            print(f"[warn] {fn.__name__} failed for {query!r}: {e}")
+            msg = f"{fn.__name__} failed for '{queries.get('display', query)}': {e}"
+            print(f"[warn] {msg}")
+            warnings.append(msg)
 
     seen: set[str] = set()
     deduped = []
@@ -211,4 +214,4 @@ def fetch_all(queries: dict, days: int, max_results: int) -> list[dict]:
             seen.add(key)
             deduped.append(paper)
 
-    return deduped
+    return deduped, warnings
