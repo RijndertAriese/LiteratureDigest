@@ -5,7 +5,11 @@ import requests
 import arxiv
 from Bio import Entrez
 
-Entrez.email = "literature-bot@example.com"
+Entrez.email = (
+    os.environ.get("NCBI_EMAIL")
+    or os.environ.get("SENDGRID_SENDER_EMAIL")
+    or "literature-bot@example.com"
+)
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY")
 if NCBI_API_KEY:
     Entrez.api_key = NCBI_API_KEY
@@ -50,7 +54,7 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
             ])
 
             journal = art.get("Journal", {}).get("Title", "")
-            pub_date = _pubmed_date(art)
+            pub_date = _pubmed_date(art, article)
             doi = _pubmed_doi(article)
 
             papers.append({
@@ -69,12 +73,56 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
     return papers
 
 
-def _pubmed_date(art: dict) -> str:
+def _pubmed_date(art: dict, article: dict) -> str:
+    """
+    Return the actual online publication date, not the future journal issue date.
+
+    Priority:
+      1. ArticleDate with DateType="Electronic"  — epub date (most accurate)
+      2. PubmedData History entry with status "pubmed" — date added to PubMed
+      3. Journal issue PubDate                   — last resort (may be future)
+    """
+    today = datetime.date.today()
+
+    # 1. Electronic publication date
+    for d in art.get("ArticleDate", []):
+        try:
+            year, month = int(str(d["Year"])), int(str(d["Month"]))
+            if datetime.date(year, month, 1) <= today:
+                month_name = datetime.date(year, month, 1).strftime("%b")
+                return f"{year} {month_name}"
+        except Exception:
+            continue
+
+    # 2. PubMed entry date from history
+    try:
+        for hist in article["PubmedData"]["History"]:
+            if str(hist.attributes.get("PubStatus", "")) in ("pubmed", "entrez"):
+                year, month = int(str(hist["Year"])), int(str(hist["Month"]))
+                if datetime.date(year, month, 1) <= today:
+                    month_name = datetime.date(year, month, 1).strftime("%b")
+                    return f"{year} {month_name}"
+    except Exception:
+        pass
+
+    # 3. Journal issue date — only if not in the future
     try:
         pub = art["Journal"]["JournalIssue"]["PubDate"]
-        return f"{pub.get('Year', '')} {pub.get('Month', '')}".strip()
+        year_str = str(pub.get("Year", ""))
+        month_str = str(pub.get("Month", "1"))
+        if year_str:
+            year = int(year_str)
+            # month may be a name ("Jan") or number
+            try:
+                month = int(month_str)
+            except ValueError:
+                month = datetime.datetime.strptime(month_str[:3], "%b").month
+            if datetime.date(year, month, 1) <= today:
+                return f"{year} {pub.get('Month', '')}".strip()
     except Exception:
-        return ""
+        pass
+
+    return "epub ahead of print"
 
 
 def _pubmed_doi(article: dict) -> str:
@@ -92,11 +140,11 @@ def _pubmed_doi(article: dict) -> str:
 def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
     since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
-    # The query_translator already adds cat: restrictions; we use it as-is.
-    # (The _fallback in query_translator also adds cat:q-bio for safety.)
+    query = _ensure_arxiv_category(keyword)
+
     client = arxiv.Client()
     search = arxiv.Search(
-        query=keyword,
+        query=query,
         max_results=max_results,
         sort_by=arxiv.SortCriterion.SubmittedDate,
         sort_order=arxiv.SortOrder.Descending,
@@ -126,7 +174,6 @@ def fetch_biorxiv(keyword: str, days: int, max_results: int) -> list[dict]:
     since = _date_n_days_ago(days).strftime("%Y-%m-%d")
     today = datetime.date.today().strftime("%Y-%m-%d")
 
-    url = f"https://api.biorxiv.org/details/biorxiv/{since}/{today}/0/json"
     papers = []
     cursor = 0
 
@@ -177,6 +224,13 @@ def _format_authors(names: list[str]) -> str:
     if len(names) <= 3:
         return ", ".join(names)
     return f"{names[0]}, {names[1]}, {names[2]} et al."
+
+
+def _ensure_arxiv_category(query: str) -> str:
+    """Keep arXiv searches scoped if the translator omits a category filter."""
+    if "cat:" in query:
+        return query
+    return f"(cat:q-bio OR cat:eess.SP) AND ({query})"
 
 
 def fetch_all(queries: dict, days: int, max_results: int) -> tuple[list[dict], list[str]]:
