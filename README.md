@@ -25,6 +25,10 @@ max_results_per_source: 25 # per topic per source
 recipient_email: "you@example.com"  # overridden by RECIPIENT_EMAIL secret
 ```
 
+For PubMed, the bot filters by exact electronic/publication date from the
+fetched XML record. PubMed indexing dates are used only to find candidates, so
+older papers that were merely indexed recently are excluded from the digest.
+
 ## Required GitHub Secrets
 
 Set these in **repo → Settings → Secrets → Actions**:

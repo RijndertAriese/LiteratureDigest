@@ -22,16 +22,24 @@ def _date_n_days_ago(n: int) -> datetime.date:
 # ── PubMed ────────────────────────────────────────────────────────────────────
 
 def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
-    since = _date_n_days_ago(days).strftime("%Y/%m/%d")
-    today = datetime.date.today().strftime("%Y/%m/%d")
+    since_date = _date_n_days_ago(days)
+    today_date = datetime.date.today()
+    since = since_date.strftime("%Y/%m/%d")
+    today = today_date.strftime("%Y/%m/%d")
 
-    # Use [Date - Entrez] (when PubMed indexed the paper) instead of
-    # [Date - Publication] (journal issue date). This correctly excludes
-    # papers with future issue dates (e.g. "2026 Dec" for a Jan epub)
-    # while including genuinely new epub-ahead-of-print papers.
-    query = f'({keyword}) AND ("{since}"[Date - Entrez] : "{today}"[Date - Entrez])'
-
-    handle = Entrez.esearch(db="pubmed", term=query, retmax=max_results, sort="pub_date")
+    # PubMed's Entrez date is only a candidate window. Some old papers are
+    # indexed or modified recently, so each fetched record is post-filtered by
+    # its exact electronic/publication date below.
+    candidate_limit = max(max_results * 20, 100)
+    handle = Entrez.esearch(
+        db="pubmed",
+        term=f"({keyword})",
+        retmax=candidate_limit,
+        sort="pub_date",
+        datetype="edat",
+        mindate=since,
+        maxdate=today,
+    )
     record = Entrez.read(handle)
     handle.close()
 
@@ -60,7 +68,11 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
             ])
 
             journal = art.get("Journal", {}).get("Title", "")
-            pub_date = _pubmed_date(art, article)
+            published_on = _pubmed_exact_publication_date(article)
+            if published_on is None or not since_date <= published_on <= today_date:
+                continue
+
+            pub_date = _format_date(published_on)
             doi = _pubmed_doi(article)
 
             papers.append({
@@ -73,62 +85,85 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
                 "doi": doi,
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{medline['PMID']}/",
             })
+            if len(papers) >= max_results:
+                break
         except Exception:
             continue
 
     return papers
 
 
-def _pubmed_date(art: dict, article: dict) -> str:
+def _pubmed_exact_publication_date(article: dict) -> datetime.date | None:
     """
-    Return the actual online publication date, not the future journal issue date.
+    Return an exact publication date suitable for recency filtering.
 
-    Priority:
-      1. ArticleDate with DateType="Electronic"  — epub date (most accurate)
-      2. PubmedData History entry with status "pubmed" — date added to PubMed
-      3. Journal issue PubDate                   — last resort (may be future)
+    PubMed's Entrez date tracks indexing, not publication. For a "last N days"
+    digest, prefer the electronic article date, then explicit epublish/ahead of
+    print history entries, and only then an exact journal issue date.
     """
-    today = datetime.date.today()
+    art = article["MedlineCitation"]["Article"]
 
-    # 1. Electronic publication date
     for d in art.get("ArticleDate", []):
-        try:
-            year, month = int(str(d["Year"])), int(str(d["Month"]))
-            if datetime.date(year, month, 1) <= today:
-                month_name = datetime.date(year, month, 1).strftime("%b")
-                return f"{year} {month_name}"
-        except Exception:
-            continue
+        parsed = _parse_pubmed_date(
+            str(d.get("Year", "")),
+            str(d.get("Month", "")),
+            str(d.get("Day", "")),
+        )
+        if parsed:
+            return parsed
 
-    # 2. PubMed entry date from history
     try:
         for hist in article["PubmedData"]["History"]:
-            if str(hist.attributes.get("PubStatus", "")) in ("pubmed", "entrez"):
-                year, month = int(str(hist["Year"])), int(str(hist["Month"]))
-                if datetime.date(year, month, 1) <= today:
-                    month_name = datetime.date(year, month, 1).strftime("%b")
-                    return f"{year} {month_name}"
+            status = str(hist.attributes.get("PubStatus", ""))
+            if status not in {"epublish", "aheadofprint"}:
+                continue
+            parsed = _parse_pubmed_date(
+                str(hist.get("Year", "")),
+                str(hist.get("Month", "")),
+                str(hist.get("Day", "")),
+            )
+            if parsed:
+                return parsed
     except Exception:
         pass
 
-    # 3. Journal issue date — only if not in the future
     try:
         pub = art["Journal"]["JournalIssue"]["PubDate"]
-        year_str = str(pub.get("Year", ""))
-        month_str = str(pub.get("Month", "1"))
-        if year_str:
-            year = int(year_str)
-            # month may be a name ("Jan") or number
-            try:
-                month = int(month_str)
-            except ValueError:
-                month = datetime.datetime.strptime(month_str[:3], "%b").month
-            if datetime.date(year, month, 1) <= today:
-                return f"{year} {pub.get('Month', '')}".strip()
+        return _parse_pubmed_date(
+            str(pub.get("Year", "")),
+            str(pub.get("Month", "")),
+            str(pub.get("Day", "")),
+        )
     except Exception:
-        pass
+        return None
 
-    return "epub ahead of print"
+
+def _parse_pubmed_date(year: str, month: str, day: str) -> datetime.date | None:
+    if not year or not month or not day:
+        return None
+
+    try:
+        year_num = int(year)
+        day_num = int(day)
+    except ValueError:
+        return None
+
+    try:
+        month_num = int(month)
+    except ValueError:
+        try:
+            month_num = datetime.datetime.strptime(month[:3], "%b").month
+        except ValueError:
+            return None
+
+    try:
+        return datetime.date(year_num, month_num, day_num)
+    except ValueError:
+        return None
+
+
+def _format_date(date: datetime.date) -> str:
+    return date.strftime("%Y %b %d")
 
 
 def _pubmed_doi(article: dict) -> str:
