@@ -47,13 +47,13 @@ Set these in **repo → Settings → Secrets → Actions**:
 
 ## Schedule
 
-The workflow runs every **Monday at 08:00 UTC** by default.
+The workflow runs every **Monday at 08:17 UTC** by default.
 
 To change the schedule, edit `.github/workflows/digest.yml`:
 
 ```yaml
 schedule:
-  - cron: "0 8 * * 1"   # Mon 08:00 UTC  → weekly
+  - cron: "17 8 * * 1"  # Mon 08:17 UTC  → weekly
   # - cron: "0 8 1,15 * *" # 1st & 15th   → biweekly
   # - cron: "0 8 1 * *"    # 1st of month → monthly
 ```

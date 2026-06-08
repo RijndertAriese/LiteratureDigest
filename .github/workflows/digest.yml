@@ -2,7 +2,7 @@ name: Literature Digest
 
 on:
   schedule:
-    - cron: "0 8 * * 1"   # every Monday at 08:00 UTC
+    - cron: "7 11 * * 1"
   workflow_dispatch:        # manual trigger from GitHub UI
 
 jobs:
