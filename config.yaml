@@ -1,11 +1,11 @@
 topics:
   - "myeloid cells in brain cancers"
-  - "CAR-macrophage or CAR-microglia or CAR-M therapy for solid tumors"
+  - "CAR myeloid cell therapy including macrophages monocytes or progenitors for cancer"
   - "microglia genetic engineering or reprogramming in glioma or brain cancer"
-  - "brain tumor microenvironment"
-  - "Tumor state plasticity in brain tumors"
-  - "Linking live imaging with spatial transcriptomics"
-
+  - "pediatric brain tumor microenvironment immune cells"
+  - "tumor cell state plasticity in glioma or brain cancer"
+  - "live imaging combined with spatial transcriptomics in brain tumor or glioma"
+  
 interval_days: 7
 
 max_results_per_source: 25
