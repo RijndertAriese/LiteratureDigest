@@ -49,10 +49,14 @@ def validate_config(cfg: dict) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             errors.append(f"config.yaml: '{key}' must be a positive integer")
 
-    if not os.environ.get("SENDGRID_API_KEY"):
-        errors.append("SENDGRID_API_KEY secret is not set")
-    if not os.environ.get("SENDGRID_SENDER_EMAIL"):
-        errors.append("SENDGRID_SENDER_EMAIL secret is not set")
+    if not os.environ.get("SMTP_HOST"):
+        errors.append("SMTP_HOST secret is not set")
+    if not (
+        os.environ.get("SENDER_EMAIL")
+        or os.environ.get("SMTP_SENDER_EMAIL")
+        or os.environ.get("SMTP_USER")
+    ):
+        errors.append("SENDER_EMAIL (or SMTP_USER) secret is not set")
 
     if errors:
         print("[error] Configuration problems found:")

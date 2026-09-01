@@ -1,16 +1,28 @@
-import base64
 import datetime
 import os
+import smtplib
+from email.message import EmailMessage
 from html import escape
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (
-    Mail, Attachment, FileContent, FileName, FileType, Disposition
-)
+
+
+def _env(*names: str) -> str | None:
+    """Return the first set (non-empty) environment variable among names."""
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
 
 
 def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[str] | None = None) -> None:
-    api_key = os.environ["SENDGRID_API_KEY"]
-    sender = os.environ["SENDGRID_SENDER_EMAIL"]
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    username = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASSWORD")
+    # From address defaults to the SMTP username (usually an email address).
+    sender = _env("SENDER_EMAIL", "SMTP_SENDER_EMAIL") or username
+    if not sender:
+        raise RuntimeError("No sender address: set SENDER_EMAIL or SMTP_USER")
 
     today = datetime.date.today().strftime("%B %d, %Y")
     subject = f"Literature Digest — {today} ({paper_count} new paper{'s' if paper_count != 1 else ''})"
@@ -32,25 +44,33 @@ def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[
         f"<p>— Literature Bot</p>"
     )
 
-    message = Mail(
-        from_email=sender,
-        to_emails=recipient,
-        subject=subject,
-        html_content=body,
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = subject
+    message.set_content(
+        "Your literature digest is attached (view this message as HTML for details)."
     )
+    message.add_alternative(body, subtype="html")
 
     with open(pdf_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode()
+        pdf_bytes = f.read()
 
     filename = f"literature_digest_{datetime.date.today().isoformat()}.pdf"
-    attachment = Attachment(
-        FileContent(encoded),
-        FileName(filename),
-        FileType("application/pdf"),
-        Disposition("attachment"),
+    message.add_attachment(
+        pdf_bytes, maintype="application", subtype="pdf", filename=filename
     )
-    message.attachment = attachment
 
-    client = SendGridAPIClient(api_key)
-    response = client.send(message)
-    print(f"[mail] sent — status {response.status_code}")
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=60) as server:
+            if username and password:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=60) as server:
+            server.starttls()
+            if username and password:
+                server.login(username, password)
+            server.send_message(message)
+
+    print(f"[mail] sent — to {recipient} via {host}:{port}")

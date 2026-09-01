@@ -38,11 +38,15 @@ Set these in **repo → Settings → Secrets → Actions**:
 
 | Secret | Description |
 |---|---|
-| `SENDGRID_API_KEY` | SendGrid API key (Mail Send permission only) |
-| `SENDGRID_SENDER_EMAIL` | Verified sender email in SendGrid |
+| `SMTP_HOST` | SMTP server hostname (e.g. `smtp.gmail.com`) |
+| `SMTP_PORT` | *(optional)* SMTP port; defaults to `587` (STARTTLS). Use `465` for implicit SSL |
+| `SMTP_USER` | SMTP username (usually the full email address) |
+| `SMTP_PASSWORD` | SMTP password. For Gmail, a 16-char [App Password](https://myaccount.google.com/apppasswords) (requires 2FA) |
+| `SENDER_EMAIL` | *(optional)* From address; defaults to `SMTP_USER` |
 | `RECIPIENT_EMAIL` | Where to send the digest |
 | `GROQ_API_KEY` | *(recommended)* Enables query translation; raw topics are used if absent |
-| `NCBI_EMAIL` | *(optional)* PubMed contact email; defaults to `SENDGRID_SENDER_EMAIL` |
+| `GROQ_MODEL` | *(optional)* Override the Groq model; defaults to `openai/gpt-oss-20b` |
+| `NCBI_EMAIL` | *(optional)* PubMed contact email; defaults to `SENDER_EMAIL` |
 | `NCBI_API_KEY` | *(optional)* Raises PubMed rate limit |
 
 ## Schedule

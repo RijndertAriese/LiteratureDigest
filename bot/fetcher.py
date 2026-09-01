@@ -7,7 +7,8 @@ from Bio import Entrez
 
 Entrez.email = (
     os.environ.get("NCBI_EMAIL")
-    or os.environ.get("SENDGRID_SENDER_EMAIL")
+    or os.environ.get("SENDER_EMAIL")
+    or os.environ.get("SMTP_USER")
     or "literature-bot@example.com"
 )
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY")

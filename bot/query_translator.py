@@ -1,12 +1,18 @@
 """
 Translates plain-English research topics into database-optimised search queries
-using Groq (Llama 3). Falls back to the raw topic string if the API key is absent.
+using Groq. Falls back to the raw topic string if the API key is absent.
+
+The default model can be overridden with the GROQ_MODEL environment variable.
 """
 
 import json
 import os
 
 from groq import Groq
+
+# Groq deprecated the Llama 3.x chat models on 2026-08-16; gpt-oss-20b is the
+# recommended replacement for llama-3.1-8b-instant.
+_DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 _SYSTEM_PROMPT = """\
 You are a scientific literature search expert.
@@ -49,7 +55,7 @@ def translate_topic(topic: str) -> dict:
         client = Groq(api_key=api_key)
 
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=os.environ.get("GROQ_MODEL", _DEFAULT_MODEL),
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f'Topic: "{topic}"'},
