@@ -10,4 +10,17 @@ interval_days: 7
 
 max_results_per_source: 25
 
+# Drop peer-reviewed papers whose journal falls below this impact factor.
+# Uses OpenAlex "2-year mean citedness" (a free JIF-equivalent) as a proxy.
+# Journals with no metric are kept. Preprints are never filtered.
+# Set to 0 to disable filtering.
+min_impact_factor: 3.5
+
+# Journals to always keep regardless of the metric. Case-insensitive substring
+# match on the journal name. Use for journals whose OpenAlex score is deflated
+# by large conference-abstract supplements (e.g. Neuro-Oncology, real JIF ~13
+# but OpenAlex ~1 because of ~20k indexed meeting abstracts).
+always_include_journals:
+  - "Neuro-Oncology"
+
 recipient_email: "your@email.com"  # override with RECIPIENT_EMAIL secret

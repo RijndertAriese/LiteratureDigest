@@ -14,7 +14,13 @@ def _env(*names: str) -> str | None:
     return None
 
 
-def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[str] | None = None) -> None:
+def send_digest(
+    pdf_path: str,
+    recipient: str,
+    paper_count: int,
+    warnings: list[str] | None = None,
+    preprint_count: int = 0,
+) -> None:
     host = os.environ["SMTP_HOST"]
     port = int(os.environ.get("SMTP_PORT", "587"))
     username = os.environ.get("SMTP_USER")
@@ -25,7 +31,8 @@ def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[
         raise RuntimeError("No sender address: set SENDER_EMAIL or SMTP_USER")
 
     today = datetime.date.today().strftime("%B %d, %Y")
-    subject = f"Literature Digest — {today} ({paper_count} new paper{'s' if paper_count != 1 else ''})"
+    total = paper_count + preprint_count
+    subject = f"Literature Digest — {today} ({total} new item{'s' if total != 1 else ''})"
 
     warning_block = ""
     if warnings:
@@ -35,11 +42,16 @@ def send_digest(pdf_path: str, recipient: str, paper_count: int, warnings: list[
             f"results may be incomplete:<ul>{items}</ul></p>"
         )
 
+    preprint_line = (
+        f" plus <b>{preprint_count}</b> preprint{'s' if preprint_count != 1 else ''} "
+        f"(arXiv / bioRxiv, unfiltered)"
+        if preprint_count else ""
+    )
     body = (
         f"<p>Hi,</p>"
         f"<p>Your literature digest for <b>{today}</b> is attached. "
-        f"It contains <b>{paper_count}</b> new paper{'s' if paper_count != 1 else ''} "
-        f"from PubMed, arXiv, and bioRxiv.</p>"
+        f"It contains <b>{paper_count}</b> peer-reviewed paper{'s' if paper_count != 1 else ''} "
+        f"from PubMed{preprint_line}.</p>"
         f"{warning_block}"
         f"<p>— Literature Bot</p>"
     )

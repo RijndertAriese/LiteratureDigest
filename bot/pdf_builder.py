@@ -11,7 +11,12 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 
-def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str, warnings: list[str] | None = None) -> None:
+def build_pdf(
+    results_by_keyword: dict[str, list[dict]],
+    output_path: str,
+    warnings: list[str] | None = None,
+    preprints_by_keyword: dict[str, list[dict]] | None = None,
+) -> None:
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -29,11 +34,17 @@ def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str, warni
     story.append(Paragraph(today, styles["subtitle"]))
     story.append(Spacer(1, 0.5 * cm))
 
-    total = sum(len(v) for v in results_by_keyword.values())
-    story.append(Paragraph(
-        f"Found <b>{total}</b> new papers across {len(results_by_keyword)} keyword(s).",
-        styles["body"]
-    ))
+    preprints_by_keyword = preprints_by_keyword or {}
+    peer_total = sum(len(v) for v in results_by_keyword.values())
+    preprint_total = sum(len(v) for v in preprints_by_keyword.values())
+
+    summary = (
+        f"Found <b>{peer_total}</b> peer-reviewed paper{'s' if peer_total != 1 else ''} "
+        f"across {len(results_by_keyword)} topic{'s' if len(results_by_keyword) != 1 else ''}"
+    )
+    if preprint_total:
+        summary += f", plus <b>{preprint_total}</b> preprint{'s' if preprint_total != 1 else ''}"
+    story.append(Paragraph(summary + ".", styles["body"]))
     if warnings:
         story.append(Spacer(1, 0.2 * cm))
         story.append(Paragraph(
@@ -47,26 +58,44 @@ def build_pdf(results_by_keyword: dict[str, list[dict]], output_path: str, warni
     story.append(Spacer(1, 0.8 * cm))
 
     for keyword, papers in results_by_keyword.items():
-        story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2c5f8a")))
+        story.extend(_topic_section(keyword, papers, styles))
+
+    if preprint_total:
+        story.append(PageBreak())
+        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#2c5f8a")))
         story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph(keyword, styles["keyword_heading"]))
+        story.append(Paragraph("Preprints", styles["title"]))
         story.append(Paragraph(
-            f"{len(papers)} paper{'s' if len(papers) != 1 else ''}",
-            styles["count"]
+            "Not peer-reviewed — no impact-factor filter applied.",
+            styles["subtitle"]
         ))
-        story.append(Spacer(1, 0.4 * cm))
-
-        if not papers:
-            story.append(Paragraph("No new publications found for this keyword.", styles["body"]))
-            story.append(Spacer(1, 0.5 * cm))
-            continue
-
-        for i, paper in enumerate(papers, 1):
-            story.extend(_paper_block(paper, i, styles))
-
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(Spacer(1, 0.6 * cm))
+        for keyword, papers in preprints_by_keyword.items():
+            if papers:
+                story.extend(_topic_section(keyword, papers, styles))
 
     doc.build(story)
+
+
+def _topic_section(keyword: str, papers: list[dict], styles: dict) -> list:
+    elements = [
+        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2c5f8a")),
+        Spacer(1, 0.2 * cm),
+        Paragraph(keyword, styles["keyword_heading"]),
+        Paragraph(f"{len(papers)} paper{'s' if len(papers) != 1 else ''}", styles["count"]),
+        Spacer(1, 0.4 * cm),
+    ]
+
+    if not papers:
+        elements.append(Paragraph("No new publications found for this topic.", styles["body"]))
+        elements.append(Spacer(1, 0.5 * cm))
+        return elements
+
+    for i, paper in enumerate(papers, 1):
+        elements.extend(_paper_block(paper, i, styles))
+
+    elements.append(Spacer(1, 0.5 * cm))
+    return elements
 
 
 def _strip_html(text: str) -> str:
@@ -122,6 +151,14 @@ def _format_reference(paper: dict) -> str:
     if title:
         parts.append(f"<i>{title}</i>")
     if journal:
+        impact = paper.get("impact_factor")
+        if paper.get("source") not in ("arXiv", "bioRxiv"):
+            if isinstance(impact, (int, float)):
+                journal += f" · IF&#8776;{impact:.1f}"
+            else:
+                journal += " · IF n/a"
+            if paper.get("impact_whitelisted"):
+                journal += " · always included"
         parts.append(journal)
     if doi:
         parts.append(f"https://doi.org/{doi}")
