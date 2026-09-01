@@ -55,7 +55,7 @@ def translate_topic(topic: str) -> dict:
         client = Groq(api_key=api_key)
 
         response = client.chat.completions.create(
-            model=os.environ.get("GROQ_MODEL", _DEFAULT_MODEL),
+            model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f'Topic: "{topic}"'},
