@@ -61,10 +61,16 @@ def translate_topic(topic: str) -> dict:
                 {"role": "user", "content": f'Topic: "{topic}"'},
             ],
             temperature=0.1,
-            max_tokens=512,
+            # gpt-oss models spend tokens on reasoning before the answer; keep
+            # the effort low and the budget generous so JSON still comes back.
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
+            max_completion_tokens=2048,
         )
 
-        text = response.choices[0].message.content.strip()
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise ValueError("empty response from model")
 
         # strip accidental markdown fences
         if text.startswith("```"):
