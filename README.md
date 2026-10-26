@@ -24,6 +24,7 @@ topics:
   - "pediatric brain tumor microenvironment"
   - topic: "(live) imaging and spatial transcriptomics"  # topic with key terms
     hints: ["imaging", "live imaging", "spatial transcriptomics"]  # every query must use these
+    criteria: "Imaging and spatial transcriptomics are jointly analysed, not just both used"  # strict screen rule
 
 interval_days: 7          # how many days back to search (match your cron schedule)
 max_results_per_source: 25 # per topic, source and query variant

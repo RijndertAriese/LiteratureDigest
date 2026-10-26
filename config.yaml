@@ -1,5 +1,9 @@
-# Each topic is a plain string, or {topic, hints} where hints are key terms that
-# every generated query must include (use when Groq drifts to the wrong concept).
+# Each topic is a plain string, or a dict with:
+#   topic:    the plain-English topic
+#   hints:    key terms every generated query must include (use when Groq
+#             drifts to the wrong concept)
+#   criteria: a strict inclusion rule for the relevance screen (queries stay
+#             broad for recall; the screen keeps only papers meeting this)
 topics:
   - "myeloid cells in brain cancers"
   - topic: "CAR myeloid cell therapy including macrophages monocytes or progenitors for cancer"
@@ -8,7 +12,21 @@ topics:
   - "targeting glioma tumor microenvironment (TME) and tumor immune microenvironment (TIME)"
   - "tumor cell state plasticity"
   - topic: "(live) imaging and spatial transcriptomics"
-    hints: ["imaging", "live imaging", "intravital imaging", "spatial transcriptomics"]
+    hints: ["imaging", "live imaging", "intravital imaging", "immunofluorescence",
+            "histology", "multiplexed imaging", "spatial transcriptomics"]
+    criteria: >-
+      The study integrates (live) imaging and spatial transcriptomics as combined
+      modalities: imaging data and spatial transcriptomic data are jointly analysed,
+      registered or linked in the same tissue or model, and the conclusions depend on
+      that combination. Imaging that is part of the spatial platform's own protocol
+      does NOT count: the H&E or immunofluorescence image taken on the same slide in
+      10x Visium / Visium HD, or the built-in morphology, DAPI or segmentation stains of
+      Xenium, CosMx, MERSCOPE or similar. Imaging acquired outside the spatial
+      protocol DOES count, including H&E or immunofluorescence on separate or adjacent
+      sections, multiplexed imaging (e.g. CODEX, IMC), live / intravital or other in
+      vivo imaging, MRI or electron microscopy, when integrated with the spatial
+      transcriptomics. Exclude papers that only use both side by side or as separate
+      experiments, reviews that just mention both, and papers using only one.
   
 interval_days: 7
 

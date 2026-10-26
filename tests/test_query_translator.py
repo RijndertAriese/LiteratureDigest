@@ -31,14 +31,18 @@ class TopicHintsTest(unittest.TestCase):
     def test_parse_topics_accepts_strings_and_hint_dicts(self):
         parsed = parse_topics([
             " plain topic ",
-            {"topic": "CAR myeloid", "hints": ["CAR-M", " CAR macrophage "]},
+            {"topic": "CAR myeloid", "hints": ["CAR-M", " CAR macrophage "], "criteria": " strict "},
         ])
-        self.assertEqual(parsed, [("plain topic", []), ("CAR myeloid", ["CAR-M", "CAR macrophage"])])
+        self.assertEqual(parsed, [
+            {"topic": "plain topic", "hints": [], "criteria": ""},
+            {"topic": "CAR myeloid", "hints": ["CAR-M", "CAR macrophage"], "criteria": "strict"},
+        ])
 
     def test_hints_are_added_to_the_prompt(self):
         self.assertEqual(_user_message("x", None), 'Topic: "x"')
         self.assertIn('Key terms: "CAR-M"; "CAR macrophage"',
                       _user_message("x", ["CAR-M", "CAR macrophage"]))
+        self.assertIn("Inclusion criteria: both", _user_message("x", criteria="both"))
 
 
 if __name__ == "__main__":

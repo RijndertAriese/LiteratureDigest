@@ -59,12 +59,15 @@ Example output:
 }
 """
 
-def translate_topic(topic: str, hints: list[str] | None = None) -> dict:
+def translate_topic(
+    topic: str, hints: list[str] | None = None, criteria: str | None = None
+) -> dict:
     """
     Returns a dict with keys pubmed, arxiv (lists of query strings), biorxiv
     (list of keyword groups, each a list of terms) and display.
     Falls back to the raw topic string if no API key is set or the call fails.
-    ``hints`` are key terms from config.yaml that every query should include.
+    ``hints`` are key terms from config.yaml that every query should include;
+    ``criteria`` is the topic's inclusion rule, given as context.
     """
     api_key = os.environ.get("GROQ_API_KEY")
 
@@ -79,7 +82,7 @@ def translate_topic(topic: str, hints: list[str] | None = None) -> dict:
             model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": _user_message(topic, hints)},
+                {"role": "user", "content": _user_message(topic, hints, criteria)},
             ],
             temperature=0,
             seed=7,
@@ -115,10 +118,14 @@ def translate_topic(topic: str, hints: list[str] | None = None) -> dict:
         return _fallback(topic)
 
 
-def _user_message(topic: str, hints: list[str] | None) -> str:
+def _user_message(
+    topic: str, hints: list[str] | None = None, criteria: str | None = None
+) -> str:
     message = f'Topic: "{topic}"'
     if hints:
         message += "\nKey terms: " + "; ".join(f'"{h}"' for h in hints)
+    if criteria:
+        message += f"\nInclusion criteria: {criteria}"
     return message
 
 

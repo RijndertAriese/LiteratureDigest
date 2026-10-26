@@ -46,11 +46,12 @@ def validate_config(cfg: dict) -> None:
                 and isinstance(t.get("topic"), str) and t["topic"].strip()
                 and isinstance(t.get("hints", []), list)
                 and all(isinstance(h, str) for h in t.get("hints", []))
+                and isinstance(t.get("criteria", ""), str)
             ):
                 continue
             errors.append(
                 f"config.yaml: topic {t!r} must be a string or "
-                "{topic: <text>, hints: [<terms>]}"
+                "{topic: <text>, hints: [<terms>], criteria: <text>}"
             )
 
     recipient = cfg.get("recipient_email")
@@ -96,14 +97,17 @@ def validate_config(cfg: dict) -> None:
         sys.exit(1)
 
 
-def parse_topics(entries: list) -> list[tuple[str, list[str]]]:
-    """Config topics are strings or {topic, hints} dicts → [(topic, hints)]."""
+def parse_topics(entries: list) -> list[dict]:
+    """Config topics are strings or {topic, hints, criteria} dicts → list of dicts."""
     parsed = []
     for entry in entries:
-        if isinstance(entry, dict):
-            parsed.append((entry["topic"].strip(), [h.strip() for h in entry.get("hints", [])]))
-        else:
-            parsed.append((entry.strip(), []))
+        if not isinstance(entry, dict):
+            entry = {"topic": entry}
+        parsed.append({
+            "topic": entry["topic"].strip(),
+            "hints": [h.strip() for h in entry.get("hints", [])],
+            "criteria": (entry.get("criteria") or "").strip(),
+        })
     return parsed
 
 
@@ -222,10 +226,13 @@ def main() -> None:
     off_topic_by_topic: dict[str, int] = {}
     warnings: list[str] = []
 
-    for topic, hints in topics:
+    for entry in topics:
+        topic, hints, criteria = entry["topic"], entry["hints"], entry["criteria"]
         hint_note = f" (key terms: {', '.join(hints)})" if hints else ""
         print(f"\n[topic] {topic!r}{hint_note}")
-        queries = translate_topic(topic, hints)
+        if criteria:
+            print(f"        criteria: {criteria}")
+        queries = translate_topic(topic, hints, criteria)
         display = queries["display"]
 
         papers, topic_warnings = fetch_all(queries, days, max_results, max_age)
@@ -234,7 +241,7 @@ def main() -> None:
         off_topic = 0
         if screen:
             found = len(papers)
-            papers, off_topic, complete = screen_papers(topic, papers, hints)
+            papers, off_topic, complete = screen_papers(topic, papers, hints, criteria)
             print(f"        screened {found} candidate(s) → {len(papers)} relevant")
             if not complete:
                 warnings.append(f"relevance screen incomplete for '{display}'; "

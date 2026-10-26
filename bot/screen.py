@@ -24,13 +24,18 @@ papers are relevant: the topic is a main subject of the paper, not a passing
 mention. Be inclusive when a paper clearly contributes to the topic, e.g. a new
 method, mechanism, model or clinical result in that area; reviews count.
 Exclude papers that only share a keyword.
+When inclusion criteria are given, they are strict: a paper must meet them,
+however close its subject is to the topic.
 
 Return ONLY a JSON object: {"relevant": [<numbers of relevant papers>]}
 """
 
 
 def screen_papers(
-    topic: str, papers: list[dict], hints: list[str] | None = None
+    topic: str,
+    papers: list[dict],
+    hints: list[str] | None = None,
+    criteria: str | None = None,
 ) -> tuple[list[dict], int, bool]:
     """
     Return ``(kept, rejected_count, complete)``. Rejected titles are logged so
@@ -49,7 +54,7 @@ def screen_papers(
     for start in range(0, len(papers), _BATCH):
         batch = papers[start:start + _BATCH]
         try:
-            relevant = _screen_batch(client, topic, hints, batch)
+            relevant = _screen_batch(client, topic, hints, criteria, batch)
             for i, p in enumerate(batch, 1):
                 if i in relevant:
                     kept.append(p)
@@ -64,7 +69,7 @@ def screen_papers(
 
 
 def _screen_batch(
-    client: Groq, topic: str, hints: list[str] | None, batch: list[dict]
+    client: Groq, topic: str, hints: list[str] | None, criteria: str | None, batch: list[dict]
 ) -> set[int]:
     listing = "\n\n".join(
         f"[{i}] {p.get('title', '').strip()}\n{(p.get('abstract') or '')[:_ABSTRACT_CHARS]}"
@@ -74,7 +79,7 @@ def _screen_batch(
         model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f"{_user_message(topic, hints)}\n\nPapers:\n\n{listing}"},
+            {"role": "user", "content": f"{_user_message(topic, hints, criteria)}\n\nPapers:\n\n{listing}"},
         ],
         temperature=0,
         seed=7,
