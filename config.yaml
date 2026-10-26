@@ -3,8 +3,8 @@ topics:
   - "CAR myeloid cell therapy including macrophages monocytes or progenitors for cancer"
   - "microglia genetic engineering or reprogramming in glioma or brain cancer"
   - "targeting glioma tumor microenvironment (TME) and tumor immune microenvironment (TIME)"
-  - "tumor cell state plasticity in glioma or brain cancer"
-  - "live imaging combined with spatial transcriptomics in brain tumor or glioma"
+  - "tumor cell state plasticity"
+  - "live imaging combined with spatial transcriptomics"
   
 interval_days: 7
 
