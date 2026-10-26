@@ -23,7 +23,8 @@ screened for relevance, so favour recall: broad variants are welcome.
 Return ONLY a valid JSON object with exactly these four keys:
   "pubmed"  – list of 3 PubMed queries (boolean AND/OR, quoted phrases, MeSH where helpful):
               1. focused: all core concepts of the topic
-              2. broad: only the one or two most essential concepts
+              2. broad: drop secondary qualifiers, but ALWAYS keep the concept that
+                 makes the topic distinctive
               3. synonyms: same concepts as 1, phrased with alternative terms / MeSH
   "arxiv"   – list of 2 arXiv queries (basic boolean AND/OR), each prefixed with cat:q-bio
   "biorxiv" – list of 2-4 keyword groups for plain text matching; each group is a list
@@ -35,6 +36,10 @@ Return ONLY a valid JSON object with exactly these four keys:
 Rules:
 - Use double-quotes around multi-word phrases inside the JSON strings
 - Do not restrict queries to a disease or tissue the topic does not mention
+- Never swap a concept for a related but different one: e.g. "CAR myeloid cells"
+  means CAR macrophages/monocytes (CAR-M), NOT CAR T cells
+- When key terms are given, every query variant must use them (OR-ed with your
+  own synonyms) and bioRxiv groups should include them
 - Return nothing except the JSON object
 
 Example input:  "myeloid cells in brain cancers"
@@ -54,11 +59,12 @@ Example output:
 }
 """
 
-def translate_topic(topic: str) -> dict:
+def translate_topic(topic: str, hints: list[str] | None = None) -> dict:
     """
     Returns a dict with keys pubmed, arxiv (lists of query strings), biorxiv
     (list of keyword groups, each a list of terms) and display.
     Falls back to the raw topic string if no API key is set or the call fails.
+    ``hints`` are key terms from config.yaml that every query should include.
     """
     api_key = os.environ.get("GROQ_API_KEY")
 
@@ -73,7 +79,7 @@ def translate_topic(topic: str) -> dict:
             model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": f'Topic: "{topic}"'},
+                {"role": "user", "content": _user_message(topic, hints)},
             ],
             temperature=0,
             seed=7,
@@ -107,6 +113,13 @@ def translate_topic(topic: str) -> dict:
     except Exception as e:
         print(f"[translate] failed ({e}) — falling back to raw topic")
         return _fallback(topic)
+
+
+def _user_message(topic: str, hints: list[str] | None) -> str:
+    message = f'Topic: "{topic}"'
+    if hints:
+        message += "\nKey terms: " + "; ".join(f'"{h}"' for h in hints)
+    return message
 
 
 def _normalise(result: dict) -> dict:

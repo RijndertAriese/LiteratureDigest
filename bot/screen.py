@@ -12,7 +12,7 @@ import os
 
 from groq import Groq
 
-from bot.query_translator import _DEFAULT_MODEL
+from bot.query_translator import _DEFAULT_MODEL, _user_message
 
 _BATCH = 12
 _ABSTRACT_CHARS = 600
@@ -29,9 +29,12 @@ Return ONLY a JSON object: {"relevant": [<numbers of relevant papers>]}
 """
 
 
-def screen_papers(topic: str, papers: list[dict]) -> tuple[list[dict], int, bool]:
+def screen_papers(
+    topic: str, papers: list[dict], hints: list[str] | None = None
+) -> tuple[list[dict], int, bool]:
     """
-    Return ``(kept, rejected_count, complete)``.
+    Return ``(kept, rejected_count, complete)``. Rejected titles are logged so
+    the screen's strictness can be checked in the run log.
 
     ``complete`` is False when a batch failed and was kept unscreened.
     Without ``GROQ_API_KEY`` nothing is screened (callers check for the key).
@@ -46,8 +49,12 @@ def screen_papers(topic: str, papers: list[dict]) -> tuple[list[dict], int, bool
     for start in range(0, len(papers), _BATCH):
         batch = papers[start:start + _BATCH]
         try:
-            relevant = _screen_batch(client, topic, batch)
-            kept.extend(p for i, p in enumerate(batch, 1) if i in relevant)
+            relevant = _screen_batch(client, topic, hints, batch)
+            for i, p in enumerate(batch, 1):
+                if i in relevant:
+                    kept.append(p)
+                else:
+                    print(f"        [off-topic] {p.get('title', '').strip()[:110]}")
         except Exception as e:
             print(f"[screen] batch failed ({e}) — keeping {len(batch)} paper(s) unscreened")
             kept.extend(batch)
@@ -56,7 +63,9 @@ def screen_papers(topic: str, papers: list[dict]) -> tuple[list[dict], int, bool
     return kept, len(papers) - len(kept), complete
 
 
-def _screen_batch(client: Groq, topic: str, batch: list[dict]) -> set[int]:
+def _screen_batch(
+    client: Groq, topic: str, hints: list[str] | None, batch: list[dict]
+) -> set[int]:
     listing = "\n\n".join(
         f"[{i}] {p.get('title', '').strip()}\n{(p.get('abstract') or '')[:_ABSTRACT_CHARS]}"
         for i, p in enumerate(batch, 1)
@@ -65,7 +74,7 @@ def _screen_batch(client: Groq, topic: str, batch: list[dict]) -> set[int]:
         model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f'Topic: "{topic}"\n\nPapers:\n\n{listing}'},
+            {"role": "user", "content": f"{_user_message(topic, hints)}\n\nPapers:\n\n{listing}"},
         ],
         temperature=0,
         seed=7,

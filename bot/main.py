@@ -35,8 +35,23 @@ def validate_config(cfg: dict) -> None:
         errors.append(cfg["_config_error"])
 
     topics = cfg.get("topics")
-    if not isinstance(topics, list) or not all(isinstance(t, str) and t.strip() for t in topics):
+    if not isinstance(topics, list) or not topics:
         errors.append("config.yaml: 'topics' is missing or empty")
+    else:
+        for t in topics:
+            if isinstance(t, str) and t.strip():
+                continue
+            if (
+                isinstance(t, dict)
+                and isinstance(t.get("topic"), str) and t["topic"].strip()
+                and isinstance(t.get("hints", []), list)
+                and all(isinstance(h, str) for h in t.get("hints", []))
+            ):
+                continue
+            errors.append(
+                f"config.yaml: topic {t!r} must be a string or "
+                "{topic: <text>, hints: [<terms>]}"
+            )
 
     recipient = cfg.get("recipient_email")
     placeholder_emails = {"your@email.com", "you@example.com"}
@@ -79,6 +94,17 @@ def validate_config(cfg: dict) -> None:
         for e in errors:
             print(f"  • {e}")
         sys.exit(1)
+
+
+def parse_topics(entries: list) -> list[tuple[str, list[str]]]:
+    """Config topics are strings or {topic, hints} dicts → [(topic, hints)]."""
+    parsed = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            parsed.append((entry["topic"].strip(), [h.strip() for h in entry.get("hints", [])]))
+        else:
+            parsed.append((entry.strip(), []))
+    return parsed
 
 
 def filter_by_impact(
@@ -176,7 +202,7 @@ def main() -> None:
     cfg = load_config()
     validate_config(cfg)
 
-    topics: list[str] = cfg["topics"]
+    topics = parse_topics(cfg["topics"])
     days: int = cfg.get("interval_days", 7)
     max_results: int = cfg.get("max_results_per_source", 25)
     max_age: int = cfg.get("max_age_days", 60)
@@ -196,9 +222,10 @@ def main() -> None:
     off_topic_by_topic: dict[str, int] = {}
     warnings: list[str] = []
 
-    for topic in topics:
-        print(f"\n[topic] {topic!r}")
-        queries = translate_topic(topic)
+    for topic, hints in topics:
+        hint_note = f" (key terms: {', '.join(hints)})" if hints else ""
+        print(f"\n[topic] {topic!r}{hint_note}")
+        queries = translate_topic(topic, hints)
         display = queries["display"]
 
         papers, topic_warnings = fetch_all(queries, days, max_results, max_age)
@@ -207,7 +234,7 @@ def main() -> None:
         off_topic = 0
         if screen:
             found = len(papers)
-            papers, off_topic, complete = screen_papers(topic, papers)
+            papers, off_topic, complete = screen_papers(topic, papers, hints)
             print(f"        screened {found} candidate(s) → {len(papers)} relevant")
             if not complete:
                 warnings.append(f"relevance screen incomplete for '{display}'; "

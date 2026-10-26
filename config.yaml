@@ -1,10 +1,14 @@
+# Each topic is a plain string, or {topic, hints} where hints are key terms that
+# every generated query must include (use when Groq drifts to the wrong concept).
 topics:
   - "myeloid cells in brain cancers"
-  - "CAR myeloid cell therapy including macrophages monocytes or progenitors for cancer"
+  - topic: "CAR myeloid cell therapy including macrophages monocytes or progenitors for cancer"
+    hints: ["CAR-M", "CAR macrophage", "chimeric antigen receptor macrophage", "CAR monocyte"]
   - "microglia genetic engineering or reprogramming in glioma or brain cancer"
   - "targeting glioma tumor microenvironment (TME) and tumor immune microenvironment (TIME)"
   - "tumor cell state plasticity"
-  - "live imaging combined with spatial transcriptomics"
+  - topic: "(live) imaging and spatial transcriptomics"
+    hints: ["imaging", "live imaging", "intravital imaging", "spatial transcriptomics"]
   
 interval_days: 7
 

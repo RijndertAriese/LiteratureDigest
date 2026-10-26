@@ -1,6 +1,7 @@
 import unittest
 
-from bot.query_translator import _fallback, _normalise
+from bot.main import parse_topics
+from bot.query_translator import _fallback, _normalise, _user_message
 
 
 class NormaliseTest(unittest.TestCase):
@@ -24,6 +25,20 @@ class FallbackTest(unittest.TestCase):
         out = _fallback("live imaging combined with spatial transcriptomics")
         self.assertEqual(out["pubmed"], ["live imaging combined with spatial transcriptomics"])
         self.assertEqual(out["biorxiv"], [["live", "imaging", "spatial", "transcriptomics"]])
+
+
+class TopicHintsTest(unittest.TestCase):
+    def test_parse_topics_accepts_strings_and_hint_dicts(self):
+        parsed = parse_topics([
+            " plain topic ",
+            {"topic": "CAR myeloid", "hints": ["CAR-M", " CAR macrophage "]},
+        ])
+        self.assertEqual(parsed, [("plain topic", []), ("CAR myeloid", ["CAR-M", "CAR macrophage"])])
+
+    def test_hints_are_added_to_the_prompt(self):
+        self.assertEqual(_user_message("x", None), 'Topic: "x"')
+        self.assertIn('Key terms: "CAR-M"; "CAR macrophage"',
+                      _user_message("x", ["CAR-M", "CAR macrophage"]))
 
 
 if __name__ == "__main__":
