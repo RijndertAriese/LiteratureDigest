@@ -34,7 +34,7 @@ Return ONLY a JSON object: {"relevant": [<numbers of relevant papers>]}
 def screen_papers(
     topic: str,
     papers: list[dict],
-    hints: list[str] | None = None,
+    hints: list[list[str]] | None = None,
     criteria: str | None = None,
 ) -> tuple[list[dict], int, bool]:
     """
@@ -69,7 +69,11 @@ def screen_papers(
 
 
 def _screen_batch(
-    client: Groq, topic: str, hints: list[str] | None, criteria: str | None, batch: list[dict]
+    client: Groq,
+    topic: str,
+    hints: list[list[str]] | None,
+    criteria: str | None,
+    batch: list[dict],
 ) -> set[int]:
     listing = "\n\n".join(
         f"[{i}] {p.get('title', '').strip()}\n{(p.get('abstract') or '')[:_ABSTRACT_CHARS]}"

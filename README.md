@@ -23,7 +23,9 @@ topics:
   - "microglia engineering in glioma"
   - "pediatric brain tumor microenvironment"
   - topic: "(live) imaging and spatial transcriptomics"  # topic with key terms
-    hints: ["imaging", "live imaging", "spatial transcriptomics"]  # every query must use these
+    hints:                # key terms; a list of lists needs one term from every group
+      - ["imaging", "live imaging", "immunofluorescence"]
+      - ["spatial transcriptomics", "Visium", "Xenium"]
     criteria: "Imaging and spatial transcriptomics are jointly analysed, not just both used"  # strict screen rule
 
 interval_days: 7          # how many days back to search (match your cron schedule)

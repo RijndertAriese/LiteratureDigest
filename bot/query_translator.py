@@ -5,6 +5,7 @@ using Groq. Falls back to the raw topic string if the API key is absent.
 The default model can be overridden with the GROQ_MODEL environment variable.
 """
 
+import itertools
 import json
 import os
 
@@ -60,20 +61,22 @@ Example output:
 """
 
 def translate_topic(
-    topic: str, hints: list[str] | None = None, criteria: str | None = None
+    topic: str, hints: list[list[str]] | None = None, criteria: str | None = None
 ) -> dict:
     """
     Returns a dict with keys pubmed, arxiv (lists of query strings), biorxiv
     (list of keyword groups, each a list of terms) and display.
     Falls back to the raw topic string if no API key is set or the call fails.
-    ``hints`` are key terms from config.yaml that every query should include;
-    ``criteria`` is the topic's inclusion rule, given as context.
+    ``hints`` are key-term groups from config.yaml (terms OR-ed within a
+    group, groups AND-ed). Besides asking Groq to use them, a deterministic
+    key-term query is always added, so recall never depends on the model
+    remembering every term. ``criteria`` is the topic's inclusion rule.
     """
     api_key = os.environ.get("GROQ_API_KEY")
 
     if not api_key:
         print(f"[translate] no GROQ_API_KEY — using raw topic as query: {topic!r}")
-        return _fallback(topic)
+        return _with_key_terms(_fallback(topic), hints)
 
     try:
         client = Groq(api_key=api_key, max_retries=5)
@@ -103,7 +106,7 @@ def translate_topic(
             if text.startswith("json"):
                 text = text[4:]
 
-        result = _normalise(json.loads(text))
+        result = _with_key_terms(_normalise(json.loads(text)), hints)
 
         print(f"[translate] {topic!r}")
         for source in ("pubmed", "arxiv"):
@@ -115,15 +118,40 @@ def translate_topic(
 
     except Exception as e:
         print(f"[translate] failed ({e}) — falling back to raw topic")
-        return _fallback(topic)
+        return _with_key_terms(_fallback(topic), hints)
+
+
+def _boolean(groups: list[list[str]], fmt: str = '"{}"') -> str:
+    """[["a", "b"], ["c"]] -> '("a" OR "b") AND ("c")'."""
+    return " AND ".join("(" + " OR ".join(fmt.format(t) for t in g) + ")" for g in groups)
+
+
+_MAX_BIORXIV_GROUPS = 100
+
+
+def _with_key_terms(result: dict, hints: list[list[str]] | None) -> dict:
+    """Append one query per source built only from the key-term groups."""
+    if not hints:
+        return result
+    pubmed = _boolean(hints, '"{}"[tiab]')
+    arxiv = f"cat:q-bio AND {_boolean(hints)}"
+    combos = [
+        [t.lower() for t in combo]
+        for combo in itertools.islice(itertools.product(*hints), _MAX_BIORXIV_GROUPS)
+    ]
+    out = dict(result)
+    out["pubmed"] = result["pubmed"] + [pubmed]
+    out["arxiv"] = result["arxiv"] + [arxiv]
+    out["biorxiv"] = result["biorxiv"] + [c for c in combos if c not in result["biorxiv"]]
+    return out
 
 
 def _user_message(
-    topic: str, hints: list[str] | None = None, criteria: str | None = None
+    topic: str, hints: list[list[str]] | None = None, criteria: str | None = None
 ) -> str:
     message = f'Topic: "{topic}"'
     if hints:
-        message += "\nKey terms: " + "; ".join(f'"{h}"' for h in hints)
+        message += f"\nKey terms: {_boolean(hints)}"
     if criteria:
         message += f"\nInclusion criteria: {criteria}"
     return message

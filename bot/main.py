@@ -45,13 +45,17 @@ def validate_config(cfg: dict) -> None:
                 isinstance(t, dict)
                 and isinstance(t.get("topic"), str) and t["topic"].strip()
                 and isinstance(t.get("hints", []), list)
-                and all(isinstance(h, str) for h in t.get("hints", []))
+                and all(
+                    isinstance(h, str)
+                    or (isinstance(h, list) and h and all(isinstance(x, str) for x in h))
+                    for h in t.get("hints", [])
+                )
                 and isinstance(t.get("criteria", ""), str)
             ):
                 continue
             errors.append(
                 f"config.yaml: topic {t!r} must be a string or "
-                "{topic: <text>, hints: [<terms>], criteria: <text>}"
+                "{topic: <text>, hints: [<terms> or [<terms>], ...], criteria: <text>}"
             )
 
     recipient = cfg.get("recipient_email")
@@ -98,17 +102,31 @@ def validate_config(cfg: dict) -> None:
 
 
 def parse_topics(entries: list) -> list[dict]:
-    """Config topics are strings or {topic, hints, criteria} dicts → list of dicts."""
+    """
+    Config topics are strings or {topic, hints, criteria} dicts → list of dicts.
+
+    ``hints`` become key-term groups: a flat list is one group (terms OR-ed);
+    a list of lists gives several groups that must all match (AND-ed). A bare
+    string inside a list of lists is a one-term group.
+    """
     parsed = []
     for entry in entries:
         if not isinstance(entry, dict):
             entry = {"topic": entry}
         parsed.append({
             "topic": entry["topic"].strip(),
-            "hints": [h.strip() for h in entry.get("hints", [])],
+            "hints": _hint_groups(entry.get("hints", [])),
             "criteria": (entry.get("criteria") or "").strip(),
         })
     return parsed
+
+
+def _hint_groups(hints: list) -> list[list[str]]:
+    if not hints:
+        return []
+    if all(isinstance(h, str) for h in hints):
+        return [[h.strip() for h in hints]]
+    return [[h.strip()] if isinstance(h, str) else [x.strip() for x in h] for h in hints]
 
 
 def filter_by_impact(
@@ -228,7 +246,9 @@ def main() -> None:
 
     for entry in topics:
         topic, hints, criteria = entry["topic"], entry["hints"], entry["criteria"]
-        hint_note = f" (key terms: {', '.join(hints)})" if hints else ""
+        hint_note = (
+            " (key terms: " + " AND ".join("/".join(g) for g in hints) + ")" if hints else ""
+        )
         print(f"\n[topic] {topic!r}{hint_note}")
         if criteria:
             print(f"        criteria: {criteria}")

@@ -1,7 +1,8 @@
 # Each topic is a plain string, or a dict with:
 #   topic:    the plain-English topic
-#   hints:    key terms every generated query must include (use when Groq
-#             drifts to the wrong concept)
+#   hints:    key terms. Besides steering Groq, they always add a fixed
+#             "key-term" query per source. A flat list is one group (any term
+#             matches); a list of lists needs one term from EVERY group.
 #   criteria: a strict inclusion rule for the relevance screen (queries stay
 #             broad for recall; the screen keeps only papers meeting this)
 topics:
@@ -12,8 +13,11 @@ topics:
   - "targeting glioma tumor microenvironment (TME) and tumor immune microenvironment (TIME)"
   - "tumor cell state plasticity"
   - topic: "(live) imaging and spatial transcriptomics"
-    hints: ["imaging", "live imaging", "intravital imaging", "immunofluorescence",
-            "histology", "multiplexed imaging", "spatial transcriptomics"]
+    hints:
+      - ["imaging", "live imaging", "intravital imaging", "immunofluorescence",
+         "histology", "multiplexed imaging", "microscopy", "MRI"]
+      - ["spatial transcriptomics", "spatial transcriptomic", "Visium", "Xenium",
+         "MERFISH", "CosMx", "Stereo-seq", "Slide-seq"]
     criteria: >-
       The study integrates (live) imaging and spatial transcriptomics as combined
       modalities: imaging data and spatial transcriptomic data are jointly analysed,
