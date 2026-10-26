@@ -16,34 +16,49 @@ _DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 _SYSTEM_PROMPT = """\
 You are a scientific literature search expert.
-Convert a plain-English research topic into optimised search queries for three databases.
+Convert a plain-English research topic into search queries for three databases.
+Several query variants per database are combined, and every hit is later
+screened for relevance, so favour recall: broad variants are welcome.
 
 Return ONLY a valid JSON object with exactly these four keys:
-  "pubmed"  – PubMed query using boolean AND/OR, quoted phrases, MeSH terms where helpful
-  "arxiv"   – arXiv query using basic boolean AND/OR, prefixed with cat:q-bio to stay biomedical
-  "biorxiv" – short phrase (2-5 words) for simple text matching; no boolean operators
+  "pubmed"  – list of 3 PubMed queries (boolean AND/OR, quoted phrases, MeSH where helpful):
+              1. focused: all core concepts of the topic
+              2. broad: only the one or two most essential concepts
+              3. synonyms: same concepts as 1, phrased with alternative terms / MeSH
+  "arxiv"   – list of 2 arXiv queries (basic boolean AND/OR), each prefixed with cat:q-bio
+  "biorxiv" – list of 2-4 keyword groups for plain text matching; each group is a list
+              of 1-3 single words or short phrases that must ALL appear in a preprint's
+              title or abstract (case-insensitive). Prefer word stems that match
+              variants, e.g. "macrophage" also matches "macrophages".
   "display" – clean human-readable heading for the PDF section (title-case, ≤60 chars)
 
 Rules:
 - Use double-quotes around multi-word phrases inside the JSON strings
-- Do NOT wrap the output in markdown code fences
+- Do not restrict queries to a disease or tissue the topic does not mention
 - Return nothing except the JSON object
 
 Example input:  "myeloid cells in brain cancers"
 Example output:
 {
-  "pubmed": "(microglia OR \\"tumor-associated macrophage\\" OR \\"myeloid cells\\") AND (glioma OR glioblastoma OR \\"brain tumor\\")",
-  "arxiv": "cat:q-bio AND (microglia OR myeloid) AND (glioma OR glioblastoma)",
-  "biorxiv": "myeloid cells brain tumor",
+  "pubmed": [
+    "(microglia OR \\"tumor-associated macrophage\\" OR \\"myeloid cells\\") AND (glioma OR glioblastoma OR \\"brain tumor\\")",
+    "(microglia OR macrophage* OR myeloid) AND (glioma OR glioblastoma OR \\"brain neoplasms\\"[MeSH])",
+    "(\\"Myeloid Cells\\"[MeSH] OR \\"Macrophages\\"[MeSH] OR \\"Microglia\\"[MeSH] OR monocyte*) AND (\\"Brain Neoplasms\\"[MeSH] OR medulloblastoma OR ependymoma OR \\"brain metastasis\\")"
+  ],
+  "arxiv": [
+    "cat:q-bio AND (microglia OR myeloid OR macrophage) AND (glioma OR glioblastoma)",
+    "cat:q-bio AND (macrophage OR myeloid) AND (\\"brain tumor\\" OR \\"brain cancer\\")"
+  ],
+  "biorxiv": [["myeloid", "glioma"], ["microglia", "glioblastoma"], ["macrophage", "brain tumo"]],
   "display": "Myeloid Cells in Brain Cancers"
 }
 """
 
-
 def translate_topic(topic: str) -> dict:
     """
-    Returns a dict with keys: pubmed, arxiv, biorxiv, display.
-    Falls back to using the raw topic string for all sources if no API key is set.
+    Returns a dict with keys pubmed, arxiv (lists of query strings), biorxiv
+    (list of keyword groups, each a list of terms) and display.
+    Falls back to the raw topic string if no API key is set or the call fails.
     """
     api_key = os.environ.get("GROQ_API_KEY")
 
@@ -52,7 +67,7 @@ def translate_topic(topic: str) -> dict:
         return _fallback(topic)
 
     try:
-        client = Groq(api_key=api_key)
+        client = Groq(api_key=api_key, max_retries=5)
 
         response = client.chat.completions.create(
             model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
@@ -60,7 +75,8 @@ def translate_topic(topic: str) -> dict:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f'Topic: "{topic}"'},
             ],
-            temperature=0.1,
+            temperature=0,
+            seed=7,
             # gpt-oss models spend tokens on reasoning before the answer; keep
             # the effort low and the budget generous so JSON still comes back.
             reasoning_effort="low",
@@ -78,17 +94,14 @@ def translate_topic(topic: str) -> dict:
             if text.startswith("json"):
                 text = text[4:]
 
-        result = json.loads(text)
-
-        # validate expected keys
-        for key in ("pubmed", "arxiv", "biorxiv", "display"):
-            if key not in result:
-                raise ValueError(f"missing key: {key}")
+        result = _normalise(json.loads(text))
 
         print(f"[translate] {topic!r}")
-        print(f"            pubmed  → {result['pubmed']}")
-        print(f"            arxiv   → {result['arxiv']}")
-        print(f"            biorxiv → {result['biorxiv']}")
+        for source in ("pubmed", "arxiv"):
+            for q in result[source]:
+                print(f"            {source:<7} → {q}")
+        groups = " | ".join(" + ".join(g) for g in result["biorxiv"])
+        print(f"            biorxiv → {groups}")
         return result
 
     except Exception as e:
@@ -96,10 +109,47 @@ def translate_topic(topic: str) -> dict:
         return _fallback(topic)
 
 
+def _normalise(result: dict) -> dict:
+    """Validate the model output and coerce single strings into lists."""
+    if not isinstance(result, dict):
+        raise ValueError("response is not a JSON object")
+    for key in ("pubmed", "arxiv", "biorxiv", "display"):
+        if key not in result:
+            raise ValueError(f"missing key: {key}")
+
+    out = {"display": str(result["display"]).strip()}
+    for key in ("pubmed", "arxiv"):
+        queries = result[key]
+        if isinstance(queries, str):
+            queries = [queries]
+        out[key] = [str(q).strip() for q in queries if str(q).strip()]
+
+    groups = result["biorxiv"]
+    if isinstance(groups, str):
+        groups = [groups.split()]
+    out["biorxiv"] = [
+        [t.strip().lower() for t in ([g] if isinstance(g, str) else g) if str(t).strip()]
+        for g in groups
+    ]
+    out["biorxiv"] = [g for g in out["biorxiv"] if g]
+
+    if not out["display"] or not out["pubmed"]:
+        raise ValueError("empty display or pubmed queries")
+    return out
+
+
+_STOPWORDS = {
+    "a", "an", "and", "or", "of", "in", "on", "for", "the", "with", "to", "by",
+    "including", "combined", "between", "into", "from",
+}
+
+
 def _fallback(topic: str) -> dict:
+    words = [w.strip("(),").lower() for w in topic.split()]
+    keywords = [w for w in words if w and w not in _STOPWORDS]
     return {
-        "pubmed": topic,
-        "arxiv": f"cat:q-bio AND ({topic})",
-        "biorxiv": topic,
+        "pubmed": [topic],
+        "arxiv": [f"cat:q-bio AND ({topic})"],
+        "biorxiv": [keywords] if keywords else [],
         "display": topic.title(),
     }

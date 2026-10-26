@@ -83,12 +83,17 @@ def _header_line(stats: dict) -> str:
     line = date_window(stats)
     if stats["min_if"]:
         line += f" · minimum journal IF {stats['min_if']:g}"
+    if stats.get("screened"):
+        line += " · relevance-screened"
     return line
 
 
 def _overview_table(stats: dict, anchors: dict[str, str], styles: dict) -> Table:
     show_dropped = bool(stats["min_if"])
-    header = ["Topic", "Peer-reviewed", "Preprints"] + (["Below IF"] if show_dropped else [])
+    show_off_topic = bool(stats.get("screened"))
+    header = (["Topic", "Peer-reviewed", "Preprints"]
+              + (["Below IF"] if show_dropped else [])
+              + (["Off-topic"] if show_off_topic else []))
     rows = [[Paragraph(f"<b>{h}</b>", styles["cell_head"] if i else styles["cell_head_left"])
              for i, h in enumerate(header)]]
 
@@ -99,6 +104,8 @@ def _overview_table(stats: dict, anchors: dict[str, str], styles: dict) -> Table
                Paragraph(str(t["preprints"]), styles["cell_num"])]
         if show_dropped:
             row.append(Paragraph(str(t["dropped"]), styles["cell_num_muted"]))
+        if show_off_topic:
+            row.append(Paragraph(str(t.get("off_topic", 0)), styles["cell_num_muted"]))
         rows.append(row)
 
     totals = [Paragraph("<b>Total</b>", styles["cell"]),
@@ -107,9 +114,12 @@ def _overview_table(stats: dict, anchors: dict[str, str], styles: dict) -> Table
     if show_dropped:
         dropped = sum(t["dropped"] for t in stats["topics"])
         totals.append(Paragraph(f"<b>{dropped}</b>", styles["cell_num_muted"]))
+    if show_off_topic:
+        off = sum(t.get("off_topic", 0) for t in stats["topics"])
+        totals.append(Paragraph(f"<b>{off}</b>", styles["cell_num_muted"]))
     rows.append(totals)
 
-    num_w = 2.6 * cm
+    num_w = 2.6 * cm if len(header) <= 4 else 2.2 * cm
     widths = [None] + [num_w] * (len(header) - 1)
     table = Table(rows, colWidths=widths, repeatRows=1)
     table.setStyle(TableStyle([

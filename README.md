@@ -4,12 +4,13 @@ A weekly literature digest bot that searches PubMed, arXiv, and bioRxiv for new 
 
 ## How it works
 
-1. **Translate** — plain-English topics are converted to optimised database queries using Groq
-2. **Fetch** — queries PubMed (Entrez), arXiv, and bioRxiv for papers published in the last N days
-3. **Filter** — peer-reviewed papers below `min_impact_factor` are dropped (see below); preprints are kept unfiltered
-4. **Rank** — within each topic, always-included journals come first, then by impact factor (high → low), then unknown-IF journals; ties go to the newest paper. Preprints are listed newest first. A paper matching several topics is shown in full once and cross-referenced elsewhere
-5. **Build** — compiles a PDF digest: a page-1 overview table (per-topic counts, papers dropped by the IF filter, failed sources), one section per topic, then a separate Preprints section
-6. **Send** — emails the PDF via SMTP. The email body itself carries the overview table and the top 3 papers per topic, so the highlights are readable without opening the attachment
+1. **Translate** — Groq turns each plain-English topic into several query variants per source (focused, broad, synonyms) and keyword groups for bioRxiv
+2. **Fetch** — runs every variant against PubMed (Entrez), arXiv and bioRxiv and merges the results
+3. **Screen** — Groq reads each candidate's title and abstract and drops off-topic hits (`relevance_screen`), so broad queries add recall without adding noise
+4. **Filter** — peer-reviewed papers below `min_impact_factor` are dropped (see below); preprints are kept unfiltered
+5. **Rank** — within each topic, always-included journals come first, then by impact factor (high → low), then unknown-IF journals; ties go to the newest paper. Preprints are listed newest first. A paper matching several topics is shown in full once and cross-referenced elsewhere
+6. **Build** — compiles a PDF digest: a page-1 overview table (per-topic counts, papers dropped by the IF filter, failed sources), one section per topic, then a separate Preprints section
+7. **Send** — emails the PDF via SMTP. The email body itself carries the overview table and the top 3 papers per topic, so the highlights are readable without opening the attachment
 
 ## Configuration
 
@@ -23,7 +24,9 @@ topics:
   - "pediatric brain tumor microenvironment"
 
 interval_days: 7          # how many days back to search (match your cron schedule)
-max_results_per_source: 25 # per topic per source
+max_results_per_source: 25 # per topic, source and query variant
+max_age_days: 60          # PubMed: keep papers new to PubMed if published ≤ 60 days ago
+relevance_screen: true    # Groq drops off-topic hits (needs GROQ_API_KEY)
 min_impact_factor: 3.5   # drop peer-reviewed papers below this; 0 disables
 always_include_journals: ["Neuro-Oncology"]  # exempt from the IF filter
 recipient_email: "you@example.com"  # overridden by RECIPIENT_EMAIL secret
@@ -51,9 +54,14 @@ most predatory titles < 1.5).
 - Optional `OPENALEX_EMAIL` secret joins OpenAlex's faster "polite pool";
   otherwise it falls back to `NCBI_EMAIL` / `SENDER_EMAIL`.
 
-For PubMed, the bot filters by exact electronic/publication date from the
-fetched XML record. PubMed indexing dates are used only to find candidates, so
-older papers that were merely indexed recently are excluded from the digest.
+For PubMed, a paper is new when it **entered PubMed** in the last `interval_days`
+(the Entrez date), so every paper lands in exactly one weekly digest. Journals
+often deposit papers weeks after they go online, so these are kept as long as
+their exact electronic/publication date is at most `max_age_days` old; older
+back-catalogue records that are merely (re)indexed are excluded.
+
+bioRxiv has no search API: the bot downloads the week's preprint listing once
+per run and matches each topic's keyword groups against titles and abstracts.
 
 arXiv requests use a shared throttled client to avoid API rate limits across
 multiple configured topics.
@@ -100,7 +108,8 @@ Go to **Actions → Literature Digest → Run workflow** to trigger immediately.
 ```
 bot/
   fetcher.py         # PubMed, arXiv, bioRxiv API queries
-  query_translator.py # plain-English → optimised search queries (Groq)
+  query_translator.py # plain-English → query variants per source (Groq)
+  screen.py          # Groq relevance screen of candidate papers
   impact.py          # journal impact-factor proxy via OpenAlex
   formatting.py      # shared date / IF / link formatting for PDF and email
   pdf_builder.py     # ReportLab PDF assembly

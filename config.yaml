@@ -8,7 +8,18 @@ topics:
   
 interval_days: 7
 
+# Per topic, per source, per query variant (results are merged and de-duplicated).
 max_results_per_source: 25
+
+# PubMed: a paper counts as new when it entered PubMed in the last interval_days
+# and was published at most this many days ago. Journals often deposit papers in
+# PubMed weeks after they go online; this keeps those without letting in old
+# back-catalogue records.
+max_age_days: 60
+
+# Groq reads each candidate's title + abstract and drops off-topic hits.
+# Needs GROQ_API_KEY; without it, everything found is kept.
+relevance_screen: true
 
 # Drop peer-reviewed papers whose journal falls below this impact factor.
 # Uses OpenAlex "2-year mean citedness" (a free JIF-equivalent) as a proxy.

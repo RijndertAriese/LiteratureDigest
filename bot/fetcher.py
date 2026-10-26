@@ -39,15 +39,23 @@ def _date_n_days_ago(n: int) -> datetime.date:
 
 # ── PubMed ────────────────────────────────────────────────────────────────────
 
-def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
-    since_date = _date_n_days_ago(days)
+def fetch_pubmed(
+    keyword: str, days: int, max_results: int, max_age_days: int | None = None
+) -> list[dict]:
+    """
+    Papers that entered PubMed in the last ``days`` days (Entrez date) and were
+    published at most ``max_age_days`` ago (defaults to ``days``).
+    """
     today_date = datetime.date.today()
-    since = since_date.strftime("%Y/%m/%d")
+    since = _date_n_days_ago(days).strftime("%Y/%m/%d")
     today = today_date.strftime("%Y/%m/%d")
+    oldest_date = _date_n_days_ago(max(max_age_days or days, days))
 
-    # PubMed's Entrez date is only a candidate window. Some old papers are
-    # indexed or modified recently, so each fetched record is post-filtered by
-    # its exact electronic/publication date below.
+    # The Entrez date marks when a record entered PubMed, so each paper falls in
+    # exactly one weekly window. Journals often deposit papers weeks after they
+    # go online; those are kept up to ``max_age_days`` old. Old back-catalogue
+    # records that are merely (re)indexed now are dropped by the exact
+    # electronic/publication date below.
     candidate_limit = max(max_results * 20, 100)
     handle = Entrez.esearch(
         db="pubmed",
@@ -86,7 +94,7 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
 
             journal = art.get("Journal", {}).get("Title", "")
             published_on = _pubmed_exact_publication_date(article)
-            if published_on is None or not since_date <= published_on <= today_date:
+            if published_on is None or not oldest_date <= published_on <= today_date:
                 continue
 
             doi = _pubmed_doi(article)
@@ -241,47 +249,73 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
 
 # ── bioRxiv ───────────────────────────────────────────────────────────────────
 
-def fetch_biorxiv(keyword: str, days: int, max_results: int) -> list[dict]:
-    since = _date_n_days_ago(days).strftime("%Y-%m-%d")
-    today = datetime.date.today().strftime("%Y-%m-%d")
+_BIORXIV_PAGE_CACHE: dict[tuple[str, str], list[dict]] = {}
 
-    papers = []
+
+def _biorxiv_window(since: str, today: str) -> list[dict]:
+    """All bioRxiv preprints posted in [since, today], fetched once per run."""
+    key = (since, today)
+    if key in _BIORXIV_PAGE_CACHE:
+        return _BIORXIV_PAGE_CACHE[key]
+
+    items: list[dict] = []
     cursor = 0
-
-    while len(papers) < max_results:
+    while True:
         resp = requests.get(
             f"https://api.biorxiv.org/details/biorxiv/{since}/{today}/{cursor}/json",
-            timeout=20,
+            timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
         collection = data.get("collection", [])
         if not collection:
             break
-
-        kw_lower = keyword.lower()
-        for item in collection:
-            text = f"{item.get('title', '')} {item.get('abstract', '')}".lower()
-            if kw_lower in text:
-                doi = item.get("doi", "")
-                papers.append({
-                    "source": "bioRxiv",
-                    "title": item.get("title", ""),
-                    "authors": _format_authors(item.get("authors", "").split("; ")),
-                    "journal": "bioRxiv preprint",
-                    "date": item.get("date", ""),
-                    "abstract": item.get("abstract", ""),
-                    "doi": doi,
-                    "url": f"https://doi.org/{doi}" if doi else "",
-                })
-            if len(papers) >= max_results:
-                break
-
+        items.extend(collection)
+        # The page size is set by the API (currently 30), so advance by what came back.
+        cursor += len(collection)
         total = int(data.get("messages", [{}])[0].get("total", 0))
-        cursor += 100
         if cursor >= total:
             break
-        time.sleep(0.5)
+        time.sleep(0.3)
+
+    _BIORXIV_PAGE_CACHE[key] = items
+    return items
+
+
+def _biorxiv_matches(text: str, groups: list[list[str]]) -> bool:
+    """True if every term of at least one keyword group occurs in ``text``."""
+    text = text.lower()
+    return any(group and all(term.lower() in text for term in group) for group in groups)
+
+
+def fetch_biorxiv(groups: list[list[str]], days: int, max_results: int) -> list[dict]:
+    """bioRxiv preprints from the last ``days`` days matching any keyword group."""
+    since = _date_n_days_ago(days).strftime("%Y-%m-%d")
+    today = datetime.date.today().strftime("%Y-%m-%d")
+
+    papers = []
+    seen: set[str] = set()
+    for item in _biorxiv_window(since, today):
+        doi = item.get("doi", "")
+        # Revised preprints appear once per version; keep the first.
+        if doi in seen:
+            continue
+        text = f"{item.get('title', '')} {item.get('abstract', '')}"
+        if not _biorxiv_matches(text, groups):
+            continue
+        seen.add(doi)
+        papers.append({
+            "source": "bioRxiv",
+            "title": item.get("title", ""),
+            "authors": _format_authors(item.get("authors", "").split("; ")),
+            "journal": "bioRxiv preprint",
+            "date": item.get("date", ""),
+            "abstract": item.get("abstract", ""),
+            "doi": doi,
+            "url": f"https://doi.org/{doi}" if doi else "",
+        })
+        if len(papers) >= max_results:
+            break
 
     return papers
 
@@ -317,36 +351,43 @@ def _fetch_warning(source_name: str, display: str, error: Exception) -> str:
     return f"{source_name} failed for '{display}': {detail}"
 
 
-def fetch_all(queries: dict, days: int, max_results: int) -> tuple[list[dict], list[str]]:
+def fetch_all(
+    queries: dict, days: int, max_results: int, max_age_days: int | None = None
+) -> tuple[list[dict], list[str]]:
     """
-    queries: dict with keys "pubmed", "arxiv", "biorxiv" — one optimised
-             search string per source, as produced by query_translator.
+    queries: dict from query_translator — "pubmed" and "arxiv" are lists of
+             query strings, "biorxiv" a list of keyword groups. Results of all
+             variants are merged and de-duplicated.
 
     Returns (papers, warnings) so callers can surface fetch failures in the digest.
     """
-    source_fns = [
-        (fetch_pubmed,  queries.get("pubmed",  queries.get("display", ""))),
-        (fetch_arxiv,   queries.get("arxiv",   queries.get("display", ""))),
-        (fetch_biorxiv, queries.get("biorxiv", queries.get("display", ""))),
+    display = queries.get("display", "")
+    jobs = [
+        ("fetch_pubmed", lambda q: fetch_pubmed(q, days, max_results, max_age_days), q)
+        for q in queries.get("pubmed", [])
+    ] + [
+        ("fetch_arxiv", lambda q: fetch_arxiv(q, days, max_results), q)
+        for q in queries.get("arxiv", [])
     ]
+    if queries.get("biorxiv"):
+        groups = queries["biorxiv"]
+        jobs.append(("fetch_biorxiv", lambda q: fetch_biorxiv(q, days, max_results), groups))
 
     results = []
     warnings = []
-    for fn, query in source_fns:
-        if not query:
-            continue
+    for name, fn, query in jobs:
         try:
-            batch = fn(query, days, max_results)
-            results.extend(batch)
+            results.extend(fn(query))
         except Exception as e:
-            msg = _fetch_warning(fn.__name__, queries.get("display", query), e)
+            msg = _fetch_warning(name, display, e)
             print(f"[warn] {msg}")
-            warnings.append(msg)
+            if msg not in warnings:
+                warnings.append(msg)
 
     seen: set[str] = set()
     deduped = []
     for paper in results:
-        doi = paper.get("doi", "")
+        doi = (paper.get("doi") or "").lower()
         key = doi if doi else paper["title"].lower()[:80]
         if key not in seen:
             seen.add(key)

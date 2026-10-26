@@ -11,6 +11,7 @@ from bot.impact import annotate_impact
 from bot.pdf_builder import build_pdf
 from bot.mailer import send_digest
 from bot.query_translator import translate_topic
+from bot.screen import screen_papers
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -47,10 +48,14 @@ def validate_config(cfg: dict) -> None:
     ):
         errors.append("RECIPIENT_EMAIL secret (or config.yaml recipient_email) is not set")
 
-    for key in ("interval_days", "max_results_per_source"):
-        value = cfg.get(key, 7 if key == "interval_days" else 25)
+    defaults = {"interval_days": 7, "max_results_per_source": 25, "max_age_days": 60}
+    for key, default in defaults.items():
+        value = cfg.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             errors.append(f"config.yaml: '{key}' must be a positive integer")
+
+    if not isinstance(cfg.get("relevance_screen", True), bool):
+        errors.append("config.yaml: 'relevance_screen' must be true or false")
 
     min_if = cfg.get("min_impact_factor", 0)
     if isinstance(min_if, bool) or not isinstance(min_if, (int, float)) or min_if < 0:
@@ -143,19 +148,26 @@ def _unique(papers: list[dict]) -> list[dict]:
 
 
 def _print_summary(stats: dict) -> None:
-    rows = [(t["name"], t["peer"], t["preprints"], t["dropped"]) for t in stats["topics"]]
-    totals = ("Total", *(sum(r[i] for r in rows) for i in (1, 2, 3)))
-    width = max(len(r[0]) for r in rows + [totals])
-    width = min(width, 60)
-    header = f"{'Topic':<{width}}  {'peer':>5}  {'prepr':>5}  {'<IF':>5}"
+    rows = [
+        (t["name"], t["peer"], t["preprints"], t["dropped"], t.get("off_topic", 0))
+        for t in stats["topics"]
+    ]
+    totals = ("Total", *(sum(r[i] for r in rows) for i in (1, 2, 3, 4)))
+    width = min(max(len(r[0]) for r in rows + [totals]), 60)
+
+    def line(cells) -> str:
+        name = cells[0] if len(cells[0]) <= width else cells[0][:width - 1] + "…"
+        return f"      {name:<{width}}" + "".join(f"  {c:>9}" for c in cells[1:])
+
+    header = line(("Topic", "peer", "preprint", "below IF", "off-topic"))
+    rule = "      " + "-" * (len(header) - 6)
     print("\n[run] summary")
-    print("      " + header)
-    print("      " + "-" * len(header))
-    for name, peer, pre, dropped in rows:
-        name = name if len(name) <= width else name[:width - 1] + "…"
-        print(f"      {name:<{width}}  {peer:>5}  {pre:>5}  {dropped:>5}")
-    print("      " + "-" * len(header))
-    print(f"      {totals[0]:<{width}}  {totals[1]:>5}  {totals[2]:>5}  {totals[3]:>5}")
+    print(header)
+    print(rule)
+    for row in rows:
+        print(line(row))
+    print(rule)
+    print(line(totals))
     if stats["warnings"]:
         print(f"      ⚠ {len(stats['warnings'])} source warning(s)")
 
@@ -167,16 +179,21 @@ def main() -> None:
     topics: list[str] = cfg["topics"]
     days: int = cfg.get("interval_days", 7)
     max_results: int = cfg.get("max_results_per_source", 25)
+    max_age: int = cfg.get("max_age_days", 60)
+    screen: bool = cfg.get("relevance_screen", True) and bool(os.environ.get("GROQ_API_KEY"))
     min_if: float = float(cfg.get("min_impact_factor", 0) or 0)
     always_include: list[str] = [s.lower() for s in cfg.get("always_include_journals", [])]
     recipient: str = cfg["recipient_email"]
 
     filter_note = f", impact factor ≥ {min_if:g}" if min_if else ""
     print(f"[run] {len(topics)} topic(s), last {days} days{filter_note}")
+    if cfg.get("relevance_screen", True) and not screen:
+        print("[run] no GROQ_API_KEY — relevance screening disabled")
 
     peer_by_topic: dict[str, list[dict]] = {}
     preprint_by_topic: dict[str, list[dict]] = {}
     dropped_by_topic: dict[str, int] = {}
+    off_topic_by_topic: dict[str, int] = {}
     warnings: list[str] = []
 
     for topic in topics:
@@ -184,8 +201,17 @@ def main() -> None:
         queries = translate_topic(topic)
         display = queries["display"]
 
-        papers, topic_warnings = fetch_all(queries, days, max_results)
+        papers, topic_warnings = fetch_all(queries, days, max_results, max_age)
         warnings.extend(topic_warnings)
+
+        off_topic = 0
+        if screen:
+            found = len(papers)
+            papers, off_topic, complete = screen_papers(topic, papers)
+            print(f"        screened {found} candidate(s) → {len(papers)} relevant")
+            if not complete:
+                warnings.append(f"relevance screen incomplete for '{display}'; "
+                                "some papers are unscreened")
 
         peer = [p for p in papers if p["source"] not in PREPRINT_SOURCES]
         preprints = [p for p in papers if p["source"] in PREPRINT_SOURCES]
@@ -202,6 +228,7 @@ def main() -> None:
             preprints, key=lambda p: p.get("date", ""), reverse=True
         )
         dropped_by_topic[display] = dropped
+        off_topic_by_topic[display] = off_topic
         print(f"        → {len(peer)} peer-reviewed, {len(preprints)} preprint(s)")
 
     mark_cross_topic_duplicates(peer_by_topic, preprint_by_topic)
@@ -212,6 +239,7 @@ def main() -> None:
         "end": today,
         "days": days,
         "min_if": min_if,
+        "screened": screen,
         "warnings": warnings,
         "topics": [
             {
@@ -219,6 +247,7 @@ def main() -> None:
                 "peer": len(_unique(peer_by_topic[name])),
                 "preprints": len(_unique(preprint_by_topic[name])),
                 "dropped": dropped_by_topic[name],
+                "off_topic": off_topic_by_topic[name],
             }
             for name in peer_by_topic
         ],
