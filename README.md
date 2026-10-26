@@ -7,8 +7,9 @@ A weekly literature digest bot that searches PubMed, arXiv, and bioRxiv for new 
 1. **Translate** — plain-English topics are converted to optimised database queries using Groq
 2. **Fetch** — queries PubMed (Entrez), arXiv, and bioRxiv for papers published in the last N days
 3. **Filter** — peer-reviewed papers below `min_impact_factor` are dropped (see below); preprints are kept unfiltered
-4. **Build** — compiles a PDF digest with one section per topic, then a separate Preprints section
-5. **Send** — emails the PDF via SMTP
+4. **Rank** — within each topic, always-included journals come first, then by impact factor (high → low), then unknown-IF journals; ties go to the newest paper. Preprints are listed newest first. A paper matching several topics is shown in full once and cross-referenced elsewhere
+5. **Build** — compiles a PDF digest: a page-1 overview table (per-topic counts, papers dropped by the IF filter, failed sources), one section per topic, then a separate Preprints section
+6. **Send** — emails the PDF via SMTP. The email body itself carries the overview table and the top 3 papers per topic, so the highlights are readable without opening the attachment
 
 ## Configuration
 
@@ -101,9 +102,10 @@ bot/
   fetcher.py         # PubMed, arXiv, bioRxiv API queries
   query_translator.py # plain-English → optimised search queries (Groq)
   impact.py          # journal impact-factor proxy via OpenAlex
+  formatting.py      # shared date / IF / link formatting for PDF and email
   pdf_builder.py     # ReportLab PDF assembly
-  mailer.py          # SMTP email + attachment
-  main.py            # orchestrator with config validation
+  mailer.py          # email body (overview + top picks) and SMTP send
+  main.py            # orchestrator: config validation, ranking, run summary
 config.yaml          # topics and settings
 .github/workflows/digest.yml
 ```

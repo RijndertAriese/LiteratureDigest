@@ -1,98 +1,186 @@
-import datetime
 import re
-from html import unescape
+from html import escape, unescape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak
+    SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak, KeepTogether,
+    Table, TableStyle,
 )
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+
+from bot.formatting import date_window, display_date, impact_label, paper_link, plural
+
+ACCENT = colors.HexColor("#2c5f8a")
+_ABSTRACT_LIMIT = 800
 
 
 def build_pdf(
-    results_by_keyword: dict[str, list[dict]],
+    stats: dict,
+    peer_by_topic: dict[str, list[dict]],
+    preprint_by_topic: dict[str, list[dict]],
     output_path: str,
-    warnings: list[str] | None = None,
-    preprints_by_keyword: dict[str, list[dict]] | None = None,
 ) -> None:
+    today = display_date(stats["end"])
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
-        leftMargin=2.5 * cm,
-        rightMargin=2.5 * cm,
-        topMargin=2.5 * cm,
-        bottomMargin=2.5 * cm,
+        leftMargin=2.2 * cm,
+        rightMargin=2.2 * cm,
+        topMargin=2.2 * cm,
+        bottomMargin=2.2 * cm,
+        title=f"Literature Digest — {today}",
+        author="Literature Bot",
     )
 
     styles = _make_styles()
-    story = []
+    peer_anchors = {name: f"peer-{i}" for i, name in enumerate(peer_by_topic)}
+    preprint_anchors = {name: f"pre-{i}" for i, name in enumerate(preprint_by_topic)}
 
-    today = datetime.date.today().strftime("%B %d, %Y")
-    story.append(Paragraph("Literature Digest", styles["title"]))
-    story.append(Paragraph(today, styles["subtitle"]))
-    story.append(Spacer(1, 0.5 * cm))
-
-    preprints_by_keyword = preprints_by_keyword or {}
-    peer_total = sum(len(v) for v in results_by_keyword.values())
-    preprint_total = sum(len(v) for v in preprints_by_keyword.values())
-
-    summary = (
-        f"Found <b>{peer_total}</b> peer-reviewed paper{'s' if peer_total != 1 else ''} "
-        f"across {len(results_by_keyword)} topic{'s' if len(results_by_keyword) != 1 else ''}"
-    )
-    if preprint_total:
-        summary += f", plus <b>{preprint_total}</b> preprint{'s' if preprint_total != 1 else ''}"
-    story.append(Paragraph(summary + ".", styles["body"]))
-    if warnings:
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph(
-            f"<b>⚠ {len(warnings)} source(s) failed to fetch</b> — results may be incomplete.",
-            styles["body"]
-        ))
-        for w in warnings:
-            story.append(Paragraph(f"&nbsp;&nbsp;• {_strip_html(w)}", styles["source"]))
-        story.append(Spacer(1, 0.4 * cm))
-
+    story = [
+        Paragraph("Literature Digest", styles["title"]),
+        Paragraph(_header_line(stats), styles["subtitle"]),
+        Spacer(1, 0.5 * cm),
+        _overview_table(stats, peer_anchors, styles),
+    ]
+    if stats["warnings"]:
+        story += [Spacer(1, 0.4 * cm), _warning_box(stats["warnings"], styles)]
     story.append(Spacer(1, 0.8 * cm))
 
-    for keyword, papers in results_by_keyword.items():
-        story.extend(_topic_section(keyword, papers, styles))
-
-    if preprint_total:
-        story.append(PageBreak())
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#2c5f8a")))
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph("Preprints", styles["title"]))
-        story.append(Paragraph(
-            "Not peer-reviewed — no impact-factor filter applied.",
-            styles["subtitle"]
+    for name, papers in peer_by_topic.items():
+        story.extend(_topic_section(
+            name, papers, peer_anchors, styles,
+            empty_text="No new peer-reviewed papers this period.",
         ))
-        story.append(Spacer(1, 0.6 * cm))
-        for keyword, papers in preprints_by_keyword.items():
+
+    if stats["preprint_total"]:
+        story += [
+            PageBreak(),
+            Paragraph("Preprints", styles["title"]),
+            Paragraph("Not peer-reviewed · no impact-factor filter applied · newest first",
+                      styles["subtitle"]),
+            Spacer(1, 0.6 * cm),
+        ]
+        for name, papers in preprint_by_topic.items():
             if papers:
-                story.extend(_topic_section(keyword, papers, styles))
+                story.extend(_topic_section(name, papers, preprint_anchors, styles))
 
-    doc.build(story)
+    def footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.grey)
+        canvas.drawString(doc_.leftMargin, 1.2 * cm, f"Literature Digest · {today}")
+        canvas.drawRightString(
+            A4[0] - doc_.rightMargin, 1.2 * cm, f"page {canvas.getPageNumber()}"
+        )
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 
-def _topic_section(keyword: str, papers: list[dict], styles: dict) -> list:
-    elements = [
-        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2c5f8a")),
+def _header_line(stats: dict) -> str:
+    line = date_window(stats)
+    if stats["min_if"]:
+        line += f" · minimum journal IF {stats['min_if']:g}"
+    return line
+
+
+def _overview_table(stats: dict, anchors: dict[str, str], styles: dict) -> Table:
+    show_dropped = bool(stats["min_if"])
+    header = ["Topic", "Peer-reviewed", "Preprints"] + (["Below IF"] if show_dropped else [])
+    rows = [[Paragraph(f"<b>{h}</b>", styles["cell_head"] if i else styles["cell_head_left"])
+             for i, h in enumerate(header)]]
+
+    for t in stats["topics"]:
+        link = f'<a href="#{anchors[t["name"]]}" color="#2c5f8a">{_strip_html(t["name"])}</a>'
+        row = [Paragraph(link, styles["cell"]),
+               Paragraph(str(t["peer"]), styles["cell_num"]),
+               Paragraph(str(t["preprints"]), styles["cell_num"])]
+        if show_dropped:
+            row.append(Paragraph(str(t["dropped"]), styles["cell_num_muted"]))
+        rows.append(row)
+
+    totals = [Paragraph("<b>Total</b>", styles["cell"]),
+              Paragraph(f"<b>{stats['peer_total']}</b>", styles["cell_num"]),
+              Paragraph(f"<b>{stats['preprint_total']}</b>", styles["cell_num"])]
+    if show_dropped:
+        dropped = sum(t["dropped"] for t in stats["topics"])
+        totals.append(Paragraph(f"<b>{dropped}</b>", styles["cell_num_muted"]))
+    rows.append(totals)
+
+    num_w = 2.6 * cm
+    widths = [None] + [num_w] * (len(header) - 1)
+    table = Table(rows, colWidths=widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f2f6fa")]),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, ACCENT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return table
+
+
+def _warning_box(warnings: list[str], styles: dict) -> Table:
+    lines = [Paragraph(
+        f"<b>Warning: {plural(len(warnings), 'source')} failed to fetch</b> — results may be incomplete.",
+        styles["body"],
+    )]
+    lines += [Paragraph(f"• {_strip_html(w)}", styles["warning_item"]) for w in warnings]
+    box = Table([[lines]], colWidths=["100%"])
+    box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff4e5")),
+        ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#e0a040")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return box
+
+
+def _topic_section(
+    name: str,
+    papers: list[dict],
+    anchors: dict[str, str],
+    styles: dict,
+    empty_text: str = "No new publications found for this topic.",
+) -> list:
+    unique = [p for p in papers if not p.get("duplicate_of")]
+    repeats = [p for p in papers if p.get("duplicate_of")]
+
+    count = plural(len(unique), "paper")
+    if repeats:
+        count += f" · {len(repeats)} also listed under another topic"
+    heading = KeepTogether([
+        HRFlowable(width="100%", thickness=1.5, color=ACCENT),
         Spacer(1, 0.2 * cm),
-        Paragraph(keyword, styles["keyword_heading"]),
-        Paragraph(f"{len(papers)} paper{'s' if len(papers) != 1 else ''}", styles["count"]),
-        Spacer(1, 0.4 * cm),
-    ]
+        Paragraph(f'<a name="{anchors[name]}"/>{_strip_html(name)}', styles["keyword_heading"]),
+        Paragraph(count, styles["count"]),
+        Spacer(1, 0.3 * cm),
+    ])
+    elements = [heading]
 
     if not papers:
-        elements.append(Paragraph("No new publications found for this topic.", styles["body"]))
-        elements.append(Spacer(1, 0.5 * cm))
+        elements += [Paragraph(empty_text, styles["empty"]), Spacer(1, 0.5 * cm)]
         return elements
 
-    for i, paper in enumerate(papers, 1):
-        elements.extend(_paper_block(paper, i, styles))
+    for i, paper in enumerate(unique, 1):
+        elements.append(KeepTogether(_paper_block(paper, i, styles)))
+
+    if repeats:
+        elements.append(Paragraph("Also matches this topic:", styles["count"]))
+        for p in repeats:
+            target = anchors.get(p["duplicate_of"])
+            see = _strip_html(p["duplicate_of"])
+            if target:
+                see = f'<a href="#{target}" color="#2c5f8a">{see}</a>'
+            elements.append(Paragraph(
+                f"• {_strip_html(p.get('title', 'Untitled'))} — see {see}",
+                styles["repeat"],
+            ))
 
     elements.append(Spacer(1, 0.5 * cm))
     return elements
@@ -101,115 +189,103 @@ def _topic_section(keyword: str, papers: list[dict], styles: dict) -> list:
 def _strip_html(text: str) -> str:
     """Remove HTML tags, unescape entities, then re-escape XML-special chars
     so ReportLab's paragraph parser never sees bare & < > in plain text."""
-    text = re.sub(r'<[^>]+>', '', text)      # strip tags
-    text = unescape(text).strip()            # decode &amp; &lt; etc.
+    text = re.sub(r'<[^>]+>', '', text or "")   # strip tags
+    text = unescape(text).strip()               # decode &amp; &lt; etc.
     # re-escape for ReportLab XML parser (but don't double-escape)
     text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     return text
 
 
+def _truncate(text: str, limit: int = _ABSTRACT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(",;:.")
+    return cut + " …"
+
+
 def _paper_block(paper: dict, index: int, styles: dict) -> list:
-    elements = []
+    title = _strip_html(paper.get("title") or "Untitled")
+    link = paper_link(paper)
+    if link:
+        title = f'<a href="{escape(link, quote=True)}">{title}</a>'
+    elements = [
+        Paragraph(f"{index}. {title}", styles["paper_title"]),
+        Paragraph(_meta_line(paper), styles["meta"]),
+    ]
 
-    title = _strip_html(paper.get("title", "Untitled"))
-    elements.append(Paragraph(f"{index}. {title}", styles["paper_title"]))
+    authors = _strip_html(paper.get("authors", ""))
+    if authors:
+        elements.append(Paragraph(authors, styles["authors"]))
 
-    ref = _format_reference(paper)
-    elements.append(Paragraph(ref, styles["reference"]))
+    if paper.get("also_in"):
+        others = ", ".join(_strip_html(t) for t in paper["also_in"])
+        elements.append(Paragraph(f"Also matches: {others}", styles["authors"]))
 
-    source_badge = f'[{paper.get("source", "")}]'
-    url = paper.get("url", "")
-    if url:
-        source_text = f'{source_badge} <a href="{url}" color="#2c5f8a">{url}</a>'
-    else:
-        source_text = source_badge
-    elements.append(Paragraph(source_text, styles["source"]))
-
-    abstract = _strip_html(paper.get("abstract", ""))
+    abstract = _strip_html(_truncate(paper.get("abstract", "")))
     if abstract:
-        if len(abstract) > 800:
-            abstract = abstract[:797] + "..."
-        elements.append(Spacer(1, 0.15 * cm))
-        elements.append(Paragraph(abstract, styles["abstract"]))
+        elements += [Spacer(1, 0.1 * cm), Paragraph(abstract, styles["abstract"])]
 
-    elements.append(Spacer(1, 0.5 * cm))
+    elements.append(Spacer(1, 0.45 * cm))
     return elements
 
 
-def _format_reference(paper: dict) -> str:
-    authors = _strip_html(paper.get("authors", ""))
-    date = paper.get("date", "")
-    title = _strip_html(paper.get("title", ""))
-    journal = _strip_html(paper.get("journal", ""))
-    doi = paper.get("doi", "")
-
+def _meta_line(paper: dict) -> str:
+    """'<i>Journal</i> · IF 12.3 · 15 Oct 2026 · PubMed'."""
     parts = []
-    if authors:
-        parts.append(authors)
+    journal = _strip_html(paper.get("journal", ""))
+    if journal and not journal.endswith(" preprint"):  # 'bioRxiv preprint' repeats the source
+        parts.append(f"<i>{journal}</i>")
+    impact = impact_label(paper)
+    if paper.get("impact_whitelisted"):
+        parts.append(f'<font color="#2c5f8a">{impact}</font>')
+    elif impact:
+        parts.append(f"<b>{impact}</b>")
+    date = display_date(paper.get("date", ""))
     if date:
-        parts.append(f"({date})")
-    if title:
-        parts.append(f"<i>{title}</i>")
-    if journal:
-        impact = paper.get("impact_factor")
-        if paper.get("source") not in ("arXiv", "bioRxiv"):
-            if isinstance(impact, (int, float)):
-                journal += f" · IF&#8776;{impact:.1f}"
-            else:
-                journal += " · IF n/a"
-            if paper.get("impact_whitelisted"):
-                journal += " · always included"
-        parts.append(journal)
-    if doi:
-        parts.append(f"https://doi.org/{doi}")
-
-    return ". ".join(parts) + "." if parts else ""
+        parts.append(date)
+    source = paper.get("source", "")
+    url = paper.get("url", "")
+    if source and url:
+        parts.append(f'<a href="{escape(url, quote=True)}" color="#2c5f8a">{source}</a>')
+    elif source:
+        parts.append(source)
+    return " · ".join(parts)
 
 
 def _make_styles() -> dict:
     base = getSampleStyleSheet()
-    accent = colors.HexColor("#2c5f8a")
+    normal = base["Normal"]
+
+    def style(name, **kw):
+        return ParagraphStyle(name, parent=normal, **kw)
 
     return {
-        "title": ParagraphStyle(
-            "title", parent=base["Normal"],
-            fontSize=22, textColor=accent,
-            spaceAfter=4, alignment=TA_CENTER, fontName="Helvetica-Bold",
-        ),
-        "subtitle": ParagraphStyle(
-            "subtitle", parent=base["Normal"],
-            fontSize=11, textColor=colors.grey,
-            spaceAfter=6, alignment=TA_CENTER,
-        ),
-        "keyword_heading": ParagraphStyle(
-            "keyword_heading", parent=base["Normal"],
-            fontSize=15, textColor=accent,
-            spaceBefore=4, spaceAfter=2, fontName="Helvetica-Bold",
-        ),
-        "count": ParagraphStyle(
-            "count", parent=base["Normal"],
-            fontSize=9, textColor=colors.grey, spaceAfter=4,
-        ),
-        "paper_title": ParagraphStyle(
-            "paper_title", parent=base["Normal"],
-            fontSize=11, fontName="Helvetica-Bold",
-            spaceBefore=4, spaceAfter=3,
-        ),
-        "reference": ParagraphStyle(
-            "reference", parent=base["Normal"],
-            fontSize=9, textColor=colors.HexColor("#444444"), spaceAfter=2,
-        ),
-        "source": ParagraphStyle(
-            "source", parent=base["Normal"],
-            fontSize=8, textColor=colors.grey, spaceAfter=3,
-        ),
-        "abstract": ParagraphStyle(
-            "abstract", parent=base["Normal"],
-            fontSize=9, leading=13,
-            leftIndent=10, textColor=colors.HexColor("#333333"),
-        ),
-        "body": ParagraphStyle(
-            "body", parent=base["Normal"],
-            fontSize=10, leading=14,
-        ),
+        "title": style("title", fontSize=22, leading=26, textColor=ACCENT,
+                       spaceAfter=4, alignment=TA_CENTER, fontName="Helvetica-Bold"),
+        "subtitle": style("subtitle", fontSize=10, textColor=colors.grey,
+                          spaceAfter=6, alignment=TA_CENTER),
+        "keyword_heading": style("keyword_heading", fontSize=15, leading=19, textColor=ACCENT,
+                                 spaceBefore=4, spaceAfter=2, fontName="Helvetica-Bold"),
+        "count": style("count", fontSize=9, textColor=colors.grey, spaceAfter=4),
+        "paper_title": style("paper_title", fontSize=11, leading=14,
+                             fontName="Helvetica-Bold", spaceBefore=4, spaceAfter=2),
+        "meta": style("meta", fontSize=9, leading=12,
+                      textColor=colors.HexColor("#333333"), spaceAfter=1),
+        "authors": style("authors", fontSize=8.5, leading=11, textColor=colors.grey),
+        "abstract": style("abstract", fontSize=9, leading=13, leftIndent=10,
+                          textColor=colors.HexColor("#333333")),
+        "body": style("body", fontSize=10, leading=14),
+        "empty": style("empty", fontSize=10, leading=14, textColor=colors.grey,
+                       fontName="Helvetica-Oblique"),
+        "repeat": style("repeat", fontSize=9, leading=12, leftIndent=10,
+                        textColor=colors.HexColor("#444444")),
+        "warning_item": style("warning_item", fontSize=8.5, leading=11, leftIndent=6,
+                              textColor=colors.HexColor("#5a4a2a")),
+        "cell": style("cell", fontSize=9.5, leading=12),
+        "cell_head": style("cell_head", fontSize=9, leading=11,
+                           textColor=colors.white, alignment=TA_RIGHT),
+        "cell_head_left": style("cell_head_left", fontSize=9, leading=11, textColor=colors.white),
+        "cell_num": style("cell_num", fontSize=9.5, leading=12, alignment=TA_RIGHT),
+        "cell_num_muted": style("cell_num_muted", fontSize=9.5, leading=12,
+                                alignment=TA_RIGHT, textColor=colors.grey),
     }

@@ -76,8 +76,7 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
             art = medline["Article"]
 
             title = str(art.get("ArticleTitle", ""))
-            abstract_texts = art.get("Abstract", {}).get("AbstractText", [])
-            abstract = " ".join(str(t) for t in abstract_texts) if abstract_texts else ""
+            abstract = _pubmed_abstract(art.get("Abstract", {}).get("AbstractText", []))
 
             authors_list = art.get("AuthorList", [])
             authors = _format_authors([
@@ -90,7 +89,6 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
             if published_on is None or not since_date <= published_on <= today_date:
                 continue
 
-            pub_date = _format_date(published_on)
             doi = _pubmed_doi(article)
 
             papers.append({
@@ -98,7 +96,7 @@ def fetch_pubmed(keyword: str, days: int, max_results: int) -> list[dict]:
                 "title": title,
                 "authors": authors,
                 "journal": journal,
-                "date": pub_date,
+                "date": published_on.isoformat(),
                 "abstract": abstract,
                 "doi": doi,
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{medline['PMID']}/",
@@ -186,8 +184,17 @@ def _parse_pubmed_date(year: str, month: str, day: str) -> datetime.date | None:
         return None
 
 
-def _format_date(date: datetime.date) -> str:
-    return date.strftime("%Y %b %d")
+def _pubmed_abstract(sections: list) -> str:
+    """Join abstract sections, keeping structured labels (BACKGROUND:, METHODS: ...)."""
+    parts = []
+    for section in sections:
+        text = str(section).strip()
+        label = getattr(section, "attributes", {}).get("Label", "")
+        if label and text:
+            parts.append(f"{str(label).upper()}: {text}")
+        elif text:
+            parts.append(text)
+    return " ".join(parts)
 
 
 def _pubmed_doi(article: dict) -> str:
@@ -223,7 +230,7 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
             "title": result.title,
             "authors": _format_authors([str(a) for a in result.authors]),
             "journal": result.journal_ref or "arXiv preprint",
-            "date": result.published.strftime("%Y %b"),
+            "date": result.published.date().isoformat(),
             "abstract": result.summary.replace("\n", " "),
             "doi": result.doi or "",
             "url": result.entry_id,

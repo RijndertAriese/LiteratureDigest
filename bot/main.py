@@ -1,3 +1,4 @@
+import datetime
 import os
 import sys
 import tempfile
@@ -5,12 +6,11 @@ import tempfile
 import yaml
 
 from bot.fetcher import fetch_all
+from bot.formatting import PREPRINT_SOURCES
 from bot.impact import annotate_impact
 from bot.pdf_builder import build_pdf
 from bot.mailer import send_digest
 from bot.query_translator import translate_topic
-
-_PREPRINT_SOURCES = {"arXiv", "bioRxiv"}
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -98,6 +98,68 @@ def filter_by_impact(
     return kept, len(peer) - len(kept)
 
 
+def rank_papers(papers: list[dict]) -> list[dict]:
+    """
+    Order peer-reviewed papers for display: always-included journals first,
+    then known impact factor (high to low), then unknown; newest first on ties.
+    """
+    def tier(p: dict) -> tuple:
+        if p.get("impact_whitelisted"):
+            return (0, 0.0)
+        impact = p.get("impact_factor")
+        if impact is None:
+            return (2, 0.0)
+        return (1, -impact)
+
+    by_date = sorted(papers, key=lambda p: p.get("date", ""), reverse=True)
+    return sorted(by_date, key=tier)
+
+
+def mark_cross_topic_duplicates(*groups: dict[str, list[dict]]) -> None:
+    """
+    Flag papers that already appeared under an earlier topic.
+
+    Topics are visited in order across all groups (peer-reviewed, then
+    preprints). A repeat gets ``duplicate_of`` set to the first topic it
+    appeared under; the first copy collects the other topics in ``also_in``.
+    """
+    first_seen: dict[str, tuple[str, dict]] = {}
+    for group in groups:
+        for topic, papers in group.items():
+            for p in papers:
+                key = (p.get("doi") or p.get("title", "").lower()[:80]).lower()
+                if key not in first_seen:
+                    first_seen[key] = (topic, p)
+                    p.setdefault("also_in", [])
+                    continue
+                first_topic, original = first_seen[key]
+                p["duplicate_of"] = first_topic
+                if topic not in original["also_in"]:
+                    original["also_in"].append(topic)
+
+
+def _unique(papers: list[dict]) -> list[dict]:
+    return [p for p in papers if not p.get("duplicate_of")]
+
+
+def _print_summary(stats: dict) -> None:
+    rows = [(t["name"], t["peer"], t["preprints"], t["dropped"]) for t in stats["topics"]]
+    totals = ("Total", *(sum(r[i] for r in rows) for i in (1, 2, 3)))
+    width = max(len(r[0]) for r in rows + [totals])
+    width = min(width, 60)
+    header = f"{'Topic':<{width}}  {'peer':>5}  {'prepr':>5}  {'<IF':>5}"
+    print("\n[run] summary")
+    print("      " + header)
+    print("      " + "-" * len(header))
+    for name, peer, pre, dropped in rows:
+        name = name if len(name) <= width else name[:width - 1] + "…"
+        print(f"      {name:<{width}}  {peer:>5}  {pre:>5}  {dropped:>5}")
+    print("      " + "-" * len(header))
+    print(f"      {totals[0]:<{width}}  {totals[1]:>5}  {totals[2]:>5}  {totals[3]:>5}")
+    if stats["warnings"]:
+        print(f"      ⚠ {len(stats['warnings'])} source warning(s)")
+
+
 def main() -> None:
     cfg = load_config()
     validate_config(cfg)
@@ -114,8 +176,8 @@ def main() -> None:
 
     peer_by_topic: dict[str, list[dict]] = {}
     preprint_by_topic: dict[str, list[dict]] = {}
+    dropped_by_topic: dict[str, int] = {}
     warnings: list[str] = []
-    dropped_total = 0
 
     for topic in topics:
         print(f"\n[topic] {topic!r}")
@@ -125,29 +187,47 @@ def main() -> None:
         papers, topic_warnings = fetch_all(queries, days, max_results)
         warnings.extend(topic_warnings)
 
-        peer = [p for p in papers if p["source"] not in _PREPRINT_SOURCES]
-        preprints = [p for p in papers if p["source"] in _PREPRINT_SOURCES]
+        peer = [p for p in papers if p["source"] not in PREPRINT_SOURCES]
+        preprints = [p for p in papers if p["source"] in PREPRINT_SOURCES]
 
         annotate_impact(peer)
+        dropped = 0
         if min_if:
             peer, dropped = filter_by_impact(peer, min_if, always_include)
-            dropped_total += dropped
             if dropped:
                 print(f"        filtered out {dropped} peer-reviewed paper(s) below IF {min_if:g}")
 
-        peer_by_topic[display] = peer
-        preprint_by_topic[display] = preprints
+        peer_by_topic[display] = rank_papers(peer)
+        preprint_by_topic[display] = sorted(
+            preprints, key=lambda p: p.get("date", ""), reverse=True
+        )
+        dropped_by_topic[display] = dropped
         print(f"        → {len(peer)} peer-reviewed, {len(preprints)} preprint(s)")
 
-    peer_total = sum(len(v) for v in peer_by_topic.values())
-    preprint_total = sum(len(v) for v in preprint_by_topic.values())
-    total = peer_total + preprint_total
-    dropped_note = f", {dropped_total} below IF threshold" if min_if else ""
-    print(
-        f"\n[run] total: {peer_total} peer-reviewed + {preprint_total} preprint(s)"
-        f"{dropped_note}, {len(warnings)} source warning(s)"
-    )
+    mark_cross_topic_duplicates(peer_by_topic, preprint_by_topic)
 
+    today = datetime.date.today()
+    stats = {
+        "start": today - datetime.timedelta(days=days),
+        "end": today,
+        "days": days,
+        "min_if": min_if,
+        "warnings": warnings,
+        "topics": [
+            {
+                "name": name,
+                "peer": len(_unique(peer_by_topic[name])),
+                "preprints": len(_unique(preprint_by_topic[name])),
+                "dropped": dropped_by_topic[name],
+            }
+            for name in peer_by_topic
+        ],
+    }
+    stats["peer_total"] = sum(t["peer"] for t in stats["topics"])
+    stats["preprint_total"] = sum(t["preprints"] for t in stats["topics"])
+    _print_summary(stats)
+
+    total = stats["peer_total"] + stats["preprint_total"]
     if total == 0 and not warnings:
         print("[run] nothing to send — exiting")
         sys.exit(0)
@@ -157,11 +237,10 @@ def main() -> None:
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         pdf_path = tmp.name
 
-    build_pdf(peer_by_topic, pdf_path, warnings=warnings, preprints_by_keyword=preprint_by_topic)
+    build_pdf(stats, peer_by_topic, preprint_by_topic, pdf_path)
     print(f"[pdf] built → {pdf_path}")
 
-    send_digest(pdf_path, recipient, peer_total, warnings=warnings, preprint_count=preprint_total)
-
+    send_digest(pdf_path, recipient, stats, peer_by_topic, preprint_by_topic)
 
 if __name__ == "__main__":
     main()
