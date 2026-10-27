@@ -1,4 +1,4 @@
-# Literature Bot
+# LiteratureDigest
 
 A weekly literature digest bot that searches PubMed, arXiv, and bioRxiv for new publications matching your research topics, and emails you a formatted PDF.
 
