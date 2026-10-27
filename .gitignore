@@ -7,3 +7,6 @@ build/
 *.pdf
 .venv/
 venv/
+.DS_Store
+.github_token
+trigger_workflow.log

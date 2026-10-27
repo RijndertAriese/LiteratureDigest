@@ -112,6 +112,19 @@ Also update `interval_days` in `config.yaml` to match.
 
 Go to **Actions → Literature Digest → Run workflow** to trigger immediately.
 
+### Local trigger (optional)
+
+GitHub's cron can start scheduled runs late, so `trigger_workflow.sh` can
+trigger the workflow from your Mac every Monday via launchd. It uses the GitHub
+CLI, whose credentials live in the macOS Keychain, so no token is stored in the
+repo. One-time setup:
+
+```bash
+gh auth login
+cp com.literature-bot.trigger.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.literature-bot.trigger.plist
+```
+
 ## Project structure
 
 ```
