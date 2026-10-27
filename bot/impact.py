@@ -57,7 +57,8 @@ def _chunks(seq: list, size: int):
 
 def annotate_impact(papers: list[dict]) -> None:
     """
-    Add ``paper["impact_factor"]`` (float or None) to each paper in place.
+    Add ``paper["impact_factor"]`` (float or None) and ``paper["oa_url"]``
+    (open-access copy from OpenAlex, or None) to each paper in place.
 
     ``None`` means the journal could not be resolved or has no metric — callers
     decide whether that passes a threshold.
@@ -66,12 +67,14 @@ def annotate_impact(papers: list[dict]) -> None:
         return
 
     doi_to_source: dict[str, str] = {}
-    unresolved: list[dict] = []
+    doi_to_oa: dict[str, str] = {}
 
     dois = [_normalise_doi(p.get("doi", "")) for p in papers]
     dois = [d for d in dois if d]
     for chunk in _chunks(sorted(set(dois)), _CHUNK):
-        doi_to_source.update(_sources_for_dois(chunk))
+        sources, oa = _works_for_dois(chunk)
+        doi_to_source.update(sources)
+        doi_to_oa.update(oa)
 
     # Map every paper to a source id (via DOI, then journal-name search).
     paper_source: dict[int, str | None] = {}
@@ -94,32 +97,41 @@ def annotate_impact(papers: list[dict]) -> None:
     for idx, paper in enumerate(papers):
         sid = paper_source[idx]
         paper["impact_factor"] = _source_metric.get(sid) if sid else None
+        paper["oa_url"] = doi_to_oa.get(_normalise_doi(paper.get("doi", "")))
 
 
-def _sources_for_dois(dois: list[str]) -> dict[str, str]:
-    """Return {normalised_doi: short_source_id} for a batch of DOIs."""
+def _works_for_dois(dois: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Return ``({doi: short_source_id}, {doi: open_access_url})`` for a batch of
+    normalised DOIs.
+    """
     try:
         resp = requests.get(
             f"{_OPENALEX}/works",
             params=_params({
                 "filter": "doi:" + "|".join(dois),
-                "select": "doi,primary_location",
+                "select": "doi,primary_location,open_access",
                 "per-page": _CHUNK,
             }),
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        out: dict[str, str] = {}
+        sources: dict[str, str] = {}
+        oa: dict[str, str] = {}
         for work in resp.json().get("results", []):
-            source = (work.get("primary_location") or {}).get("source") or {}
-            sid = source.get("id")
             doi = _normalise_doi(work.get("doi", ""))
-            if sid and doi:
-                out[doi] = _short_id(sid)
-        return out
+            if not doi:
+                continue
+            source = (work.get("primary_location") or {}).get("source") or {}
+            if source.get("id"):
+                sources[doi] = _short_id(source["id"])
+            access = work.get("open_access") or {}
+            if access.get("is_oa") and access.get("oa_url"):
+                oa[doi] = access["oa_url"]
+        return sources, oa
     except Exception as e:
         print(f"[impact] DOI batch lookup failed ({e})")
-        return {}
+        return {}, {}
 
 
 def _source_for_name(journal: str) -> str | None:

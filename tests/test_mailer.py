@@ -33,5 +33,30 @@ class BuildEmailTest(unittest.TestCase):
         self.assertIn("IF 10.0", text)
 
 
+class EmailExtrasTest(unittest.TestCase):
+    def test_followed_listed_in_full_first_with_summary_reason_and_oa(self):
+        from bot.formatting import FOLLOWED_TOPIC
+        peer = {
+            FOLLOWED_TOPIC: [paper(f"Own {i}", followed=["Ariese HCR"]) for i in range(5)],
+            "Gliomas": [paper("Top", impact=9.0, reason="Shows CSF1R blockade works.",
+                              oa_url="https://pmc.example/top.pdf",
+                              article_types=["Journal Article", "Review"])],
+        }
+        preprints = {FOLLOWED_TOPIC: [], "Gliomas": []}
+        stats = stats_for(peer, preprints)
+        stats["topics"][1]["summary"] = "Myeloid & checkpoint themes."
+
+        _, text, html = build_email(stats, peer, preprints)
+
+        self.assertIn("Own 4", html)                       # not capped at 3
+        self.assertLess(html.index("Followed authors"), html.index("Gliomas</h3>"))
+        self.assertIn("★ Ariese HCR", html)
+        self.assertIn("Myeloid &amp; checkpoint themes.", html)
+        self.assertIn("Shows CSF1R blockade works.", html)
+        self.assertIn("https://pmc.example/top.pdf", html)
+        self.assertIn("[Review] Top", text)
+        self.assertIn("Why: Shows CSF1R blockade works.", text)
+
+
 if __name__ == "__main__":
     unittest.main()

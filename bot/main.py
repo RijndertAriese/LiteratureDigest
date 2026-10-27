@@ -5,13 +5,14 @@ import tempfile
 
 import yaml
 
-from bot.fetcher import fetch_all
-from bot.formatting import PREPRINT_SOURCES
+from bot.authors import matches_followed
+from bot.fetcher import fetch_all, fetch_followed
+from bot.formatting import FOLLOWED_TOPIC, PREPRINT_SOURCES
 from bot.impact import annotate_impact
 from bot.pdf_builder import build_pdf
 from bot.mailer import send_digest
 from bot.query_translator import translate_topic
-from bot.screen import screen_papers
+from bot.screen import screen_papers, summarise_topic
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -81,6 +82,10 @@ def validate_config(cfg: dict) -> None:
     if isinstance(min_if, bool) or not isinstance(min_if, (int, float)) or min_if < 0:
         errors.append("config.yaml: 'min_impact_factor' must be a non-negative number")
 
+    followed = cfg.get("followed_authors", [])
+    if not isinstance(followed, list) or not all(isinstance(a, str) and a.strip() for a in followed):
+        errors.append("config.yaml: 'followed_authors' must be a list of names, e.g. \"Ariese HCR\"")
+
     allow = cfg.get("always_include_journals", [])
     if not isinstance(allow, list) or not all(isinstance(s, str) for s in allow):
         errors.append("config.yaml: 'always_include_journals' must be a list of strings")
@@ -136,8 +141,9 @@ def filter_by_impact(
     Keep peer-reviewed papers whose journal clears ``min_if``.
 
     A paper is kept when its journal name matches an ``always_include`` substring
-    (case-insensitive), when its metric is unknown (fail-open), or when the
-    metric is at least ``min_if``. Sets ``impact_whitelisted`` on each paper.
+    (case-insensitive), when it is by a followed author, when its metric is
+    unknown (fail-open), or when the metric is at least ``min_if``. Sets
+    ``impact_whitelisted`` on each paper.
     Returns ``(kept_papers, dropped_count)``.
     """
     kept = []
@@ -146,7 +152,7 @@ def filter_by_impact(
         whitelisted = any(s in journal for s in always_include)
         p["impact_whitelisted"] = whitelisted
         metric = p.get("impact_factor")
-        if whitelisted or metric is None or metric >= min_if:
+        if whitelisted or p.get("followed") or metric is None or metric >= min_if:
             kept.append(p)
     return kept, len(peer) - len(kept)
 
@@ -191,6 +197,10 @@ def mark_cross_topic_duplicates(*groups: dict[str, list[dict]]) -> None:
                     original["also_in"].append(topic)
 
 
+def _newest_first(papers: list[dict]) -> list[dict]:
+    return sorted(papers, key=lambda p: p.get("date", ""), reverse=True)
+
+
 def _unique(papers: list[dict]) -> list[dict]:
     return [p for p in papers if not p.get("duplicate_of")]
 
@@ -231,6 +241,7 @@ def main() -> None:
     screen: bool = cfg.get("relevance_screen", True) and bool(os.environ.get("GROQ_API_KEY"))
     min_if: float = float(cfg.get("min_impact_factor", 0) or 0)
     always_include: list[str] = [s.lower() for s in cfg.get("always_include_journals", [])]
+    followed: list[str] = [a.strip() for a in cfg.get("followed_authors", [])]
     recipient: str = cfg["recipient_email"]
 
     filter_note = f", impact factor ≥ {min_if:g}" if min_if else ""
@@ -242,7 +253,24 @@ def main() -> None:
     preprint_by_topic: dict[str, list[dict]] = {}
     dropped_by_topic: dict[str, int] = {}
     off_topic_by_topic: dict[str, int] = {}
+    topic_text: dict[str, str] = {}
     warnings: list[str] = []
+
+    if followed:
+        print(f"\n[followed] {', '.join(followed)}")
+        papers, followed_warnings = fetch_followed(followed, days, max_results, max_age)
+        warnings.extend(followed_warnings)
+        for p in papers:
+            p["followed"] = matches_followed(p, followed)
+        peer = [p for p in papers if p["source"] not in PREPRINT_SOURCES]
+        annotate_impact(peer)
+        peer_by_topic[FOLLOWED_TOPIC] = _newest_first(peer)
+        preprint_by_topic[FOLLOWED_TOPIC] = _newest_first(
+            [p for p in papers if p["source"] in PREPRINT_SOURCES]
+        )
+        dropped_by_topic[FOLLOWED_TOPIC] = off_topic_by_topic[FOLLOWED_TOPIC] = 0
+        print(f"        → {len(peer)} peer-reviewed, "
+              f"{len(preprint_by_topic[FOLLOWED_TOPIC])} preprint(s)")
 
     for entry in topics:
         topic, hints, criteria = entry["topic"], entry["hints"], entry["criteria"]
@@ -257,6 +285,8 @@ def main() -> None:
 
         papers, topic_warnings = fetch_all(queries, days, max_results, max_age)
         warnings.extend(topic_warnings)
+        for p in papers:
+            p["followed"] = matches_followed(p, followed)
 
         off_topic = 0
         if screen:
@@ -278,14 +308,19 @@ def main() -> None:
                 print(f"        filtered out {dropped} peer-reviewed paper(s) below IF {min_if:g}")
 
         peer_by_topic[display] = rank_papers(peer)
-        preprint_by_topic[display] = sorted(
-            preprints, key=lambda p: p.get("date", ""), reverse=True
-        )
+        preprint_by_topic[display] = _newest_first(preprints)
         dropped_by_topic[display] = dropped
         off_topic_by_topic[display] = off_topic
+        topic_text[display] = topic
         print(f"        → {len(peer)} peer-reviewed, {len(preprints)} preprint(s)")
 
     mark_cross_topic_duplicates(peer_by_topic, preprint_by_topic)
+
+    summaries: dict[str, str | None] = {}
+    if screen:
+        for name, topic in topic_text.items():
+            fresh = _unique(peer_by_topic[name]) + _unique(preprint_by_topic[name])
+            summaries[name] = summarise_topic(topic, fresh)
 
     today = datetime.date.today()
     stats = {
@@ -302,6 +337,8 @@ def main() -> None:
                 "preprints": len(_unique(preprint_by_topic[name])),
                 "dropped": dropped_by_topic[name],
                 "off_topic": off_topic_by_topic[name],
+                "summary": summaries.get(name),
+                "followed": name == FOLLOWED_TOPIC,
             }
             for name in peer_by_topic
         ],

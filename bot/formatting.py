@@ -2,7 +2,8 @@
 
 import datetime
 
-PREPRINT_SOURCES = {"arXiv", "bioRxiv"}
+PREPRINT_SOURCES = {"arXiv", "bioRxiv", "medRxiv"}
+FOLLOWED_TOPIC = "Followed authors"
 
 
 def display_date(value: str | datetime.date) -> str:
@@ -48,3 +49,29 @@ def paper_link(paper: dict) -> str:
 
 def plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+_TYPE_BADGES = [  # (PubMed publication type prefix, badge), first match per badge
+    ("Systematic Review", "Systematic review"),
+    ("Meta-Analysis", "Meta-analysis"),
+    ("Review", "Review"),
+    ("Randomized Controlled Trial", "Clinical trial"),
+    ("Clinical Trial", "Clinical trial"),
+    ("Case Reports", "Case report"),
+]
+
+
+def badges(paper: dict) -> list[str]:
+    """Short labels for a paper: article type, 'Preprint', 'Followed: <name>'."""
+    out: list[str] = []
+    types = paper.get("article_types") or []
+    for prefix, badge in _TYPE_BADGES:
+        if badge in out or (badge == "Review" and "Systematic review" in out):
+            continue
+        if any(t.startswith(prefix) for t in types):
+            out.append(badge)
+    if paper.get("source") in PREPRINT_SOURCES:
+        out.append("Preprint")
+    if paper.get("followed"):
+        out.append("Followed: " + ", ".join(paper["followed"]))
+    return out

@@ -14,15 +14,15 @@ def _item(doi, title, abstract=""):
     return {"doi": doi, "title": title, "abstract": abstract, "authors": "A; B", "date": "2026-10-20"}
 
 
-class BiorxivTest(unittest.TestCase):
+class RxivTest(unittest.TestCase):
     def setUp(self):
-        fetcher._BIORXIV_PAGE_CACHE.clear()
+        fetcher._RXIV_PAGE_CACHE.clear()
 
     def test_keyword_groups_need_all_terms_of_any_group(self):
         groups = [["myeloid", "glioma"], ["spatial transcriptomic"]]
-        self.assertTrue(fetcher._biorxiv_matches("Myeloid cells shape GLIOMA growth", groups))
-        self.assertTrue(fetcher._biorxiv_matches("Spatial transcriptomics atlas", groups))
-        self.assertFalse(fetcher._biorxiv_matches("Myeloid cells in the lung", groups))
+        self.assertTrue(fetcher._rxiv_matches("Myeloid cells shape GLIOMA growth", groups))
+        self.assertTrue(fetcher._rxiv_matches("Spatial transcriptomics atlas", groups))
+        self.assertFalse(fetcher._rxiv_matches("Myeloid cells in the lung", groups))
 
     def test_pages_by_returned_size_and_caches_window(self):
         pages = [
@@ -31,8 +31,8 @@ class BiorxivTest(unittest.TestCase):
         ]
         with mock.patch.object(fetcher.requests, "get", side_effect=pages) as get, \
                 mock.patch.object(fetcher.time, "sleep"):
-            first = fetcher.fetch_biorxiv([["glioma"]], 7, 100)
-            second = fetcher.fetch_biorxiv([["other"]], 7, 100)
+            first = fetcher.fetch_rxiv("biorxiv", [["glioma"]], 7, 100)
+            second = fetcher.fetch_rxiv("biorxiv", [["other"]], 7, 100)
 
         self.assertEqual(get.call_count, 2)
         self.assertIn("/30/json", get.call_args_list[1].args[0])
@@ -42,8 +42,22 @@ class BiorxivTest(unittest.TestCase):
     def test_skips_repeated_versions_of_same_preprint(self):
         page = _page([_item("10.1/x", "glioma v1"), _item("10.1/x", "glioma v2")], 2)
         with mock.patch.object(fetcher.requests, "get", return_value=page):
-            papers = fetcher.fetch_biorxiv([["glioma"]], 7, 10)
+            papers = fetcher.fetch_rxiv("biorxiv", [["glioma"]], 7, 10)
         self.assertEqual([p["title"] for p in papers], ["glioma v1"])
+
+
+class MedrxivTest(unittest.TestCase):
+    def setUp(self):
+        fetcher._RXIV_PAGE_CACHE.clear()
+
+    def test_medrxiv_uses_its_own_server_and_labels(self):
+        page = _page([_item("10.1101/m", "glioma trial")], 1)
+        with mock.patch.object(fetcher.requests, "get", return_value=page) as get:
+            papers = fetcher.fetch_rxiv("medrxiv", [["glioma"]], 7, 10)
+        self.assertIn("/details/medrxiv/", get.call_args.args[0])
+        self.assertEqual(papers[0]["source"], "medRxiv")
+        self.assertEqual(papers[0]["journal"], "medRxiv preprint")
+        self.assertEqual(papers[0]["author_list"], ["A", "B"])
 
 
 class FetchAllTest(unittest.TestCase):

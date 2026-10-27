@@ -3,8 +3,9 @@ Relevance screening with Groq.
 
 Several broad query variants per topic catch more papers but also off-topic
 hits. Groq reads each candidate's title and abstract and keeps only those that
-genuinely address the topic. Screening fails open: if the API key is missing or
-a batch call fails, that batch is kept unscreened.
+genuinely address the topic, with a one-line reason shown in the digest. It
+also writes a short summary of each topic's week. Both fail open: without an
+API key or when a call fails, papers are kept unscreened and summaries skipped.
 """
 
 import json
@@ -27,7 +28,19 @@ Exclude papers that only share a keyword.
 When inclusion criteria are given, they are strict: a paper must meet them,
 however close its subject is to the topic.
 
-Return ONLY a JSON object: {"relevant": [<numbers of relevant papers>]}
+For each relevant paper give a reason of at most 20 words saying what it
+contributes to the topic (the finding or method, not "this paper is relevant").
+
+Return ONLY a JSON object:
+{"relevant": [{"id": <paper number>, "reason": "<at most 20 words>"}]}
+"""
+
+_SUMMARY_PROMPT = """You write the weekly overview for one topic of a researcher's literature digest.
+Given the topic and this week's papers (title + why each is relevant), write 2-3
+plain sentences on what is new: the main themes, notable findings or methods.
+Mention specifics; do not list every paper or repeat titles verbatim.
+No preamble (do not start with "This week"), no markdown.
+Return ONLY a JSON object: {"summary": "<text>"}
 """
 
 
@@ -57,6 +70,8 @@ def screen_papers(
             relevant = _screen_batch(client, topic, hints, criteria, batch)
             for i, p in enumerate(batch, 1):
                 if i in relevant:
+                    if relevant[i]:
+                        p["reason"] = relevant[i]
                     kept.append(p)
                 else:
                     print(f"        [off-topic] {p.get('title', '').strip()[:110]}")
@@ -74,7 +89,8 @@ def _screen_batch(
     hints: list[list[str]] | None,
     criteria: str | None,
     batch: list[dict],
-) -> set[int]:
+) -> dict[int, str]:
+    """Return ``{paper_number: reason}`` for the relevant papers of one batch."""
     listing = "\n\n".join(
         f"[{i}] {p.get('title', '').strip()}\n{(p.get('abstract') or '')[:_ABSTRACT_CHARS]}"
         for i, p in enumerate(batch, 1)
@@ -92,8 +108,54 @@ def _screen_batch(
         max_completion_tokens=2048,
     )
     text = (response.choices[0].message.content or "").strip()
-    relevant = json.loads(text).get("relevant")
+    return _parse_relevant(json.loads(text))
+
+
+def _parse_relevant(payload: dict) -> dict[int, str]:
+    """Accept [{"id": 1, "reason": "..."}] and, as a fallback, plain [1, "3"]."""
+    relevant = payload.get("relevant")
     if not isinstance(relevant, list):
         raise ValueError("response has no 'relevant' list")
-    numbers = (str(n).strip("[] ") for n in relevant)
-    return {int(n) for n in numbers if n.isdigit()}
+    out: dict[int, str] = {}
+    for item in relevant:
+        reason = ""
+        if isinstance(item, dict):
+            reason = str(item.get("reason") or "").strip()
+            item = item.get("id")
+        number = str(item).strip("[] ")
+        if number.isdigit():
+            out[int(number)] = reason
+    return out
+
+
+def summarise_topic(topic: str, papers: list[dict]) -> str | None:
+    """2-3 sentence overview of this week's papers for ``topic``, or None."""
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not papers or not api_key:
+        return None
+
+    listing = "\n".join(
+        f"- {p.get('title', '').strip()}"
+        + (f" — {p['reason']}" if p.get("reason") else "")
+        for p in papers
+    )
+    try:
+        client = Groq(api_key=api_key, max_retries=5)
+        response = client.chat.completions.create(
+            model=os.environ.get("GROQ_MODEL") or _DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": _SUMMARY_PROMPT},
+                {"role": "user", "content": f'Topic: "{topic}"\n\nPapers:\n{listing}'},
+            ],
+            temperature=0,
+            seed=7,
+            reasoning_effort="low",
+            response_format={"type": "json_object"},
+            max_completion_tokens=2048,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        summary = str(json.loads(text).get("summary") or "").strip()
+        return summary or None
+    except Exception as e:
+        print(f"[screen] summary failed for {topic!r} ({e})")
+        return None

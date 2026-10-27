@@ -60,4 +60,17 @@ min_impact_factor: 3.5
 always_include_journals:
   - "Neuro-Oncology"
 
+# Authors / labs to follow: their new papers and preprints (PubMed, bioRxiv,
+# medRxiv) always appear in a "Followed authors" section at the top, skipping the
+# relevance screen and IF filter. PubMed style: last name + initials. Matching
+# uses last name + first initial, so very common surnames may also match others.
+followed_authors:
+  - "Treutlein B"    # Barbara Treutlein
+  - "Camp JG"        # J. Gray Camp
+  - "Suva ML"        # Mario L. Suvà
+  - "Monje M"        # Michelle Monje
+  - "Filbin MG"      # Mariella G. Filbin
+  - "Arlotta P"      # Paola Arlotta
+  - "Linnarsson S"   # Sten Linnarsson
+
 recipient_email: "your@email.com"  # override with RECIPIENT_EMAIL secret

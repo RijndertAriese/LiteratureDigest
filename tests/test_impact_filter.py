@@ -38,6 +38,13 @@ class FilterByImpactTest(unittest.TestCase):
         self.assertEqual(dropped, 1)
         self.assertFalse(peer[0]["impact_whitelisted"])
 
+    def test_followed_author_paper_is_kept_below_threshold(self):
+        p = _paper("Small Journal", 0.5)
+        p["followed"] = ["Ariese HCR"]
+        kept, dropped = filter_by_impact([p], 3.5, [])
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(dropped, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

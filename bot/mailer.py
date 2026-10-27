@@ -3,7 +3,9 @@ import smtplib
 from email.message import EmailMessage
 from html import escape
 
-from bot.formatting import date_window, display_date, impact_label, paper_link, plural
+from bot.formatting import (
+    FOLLOWED_TOPIC, badges, date_window, display_date, impact_label, paper_link, plural,
+)
 
 
 def _env(*names: str) -> str | None:
@@ -40,19 +42,49 @@ def build_email(
     if stats["min_if"]:
         window += f" · journals with IF ≥ {stats['min_if']:g}"
 
-    picks = {
-        name: [p for p in papers if not p.get("duplicate_of")][:_TOP_PICKS]
-        for name, papers in peer_by_topic.items()
-    }
-    return subject, _plain_body(stats, window, picks), _html_body(stats, window, picks)
+    blocks = _topic_blocks(stats, peer_by_topic, preprint_by_topic)
+    return subject, _plain_body(stats, window, blocks), _html_body(stats, window, blocks)
+
+
+def _topic_blocks(
+    stats: dict,
+    peer_by_topic: dict[str, list[dict]],
+    preprint_by_topic: dict[str, list[dict]],
+) -> list[dict]:
+    """
+    Per topic: its weekly summary and picks. Followed authors list every paper;
+    other topics their top picks (best peer-reviewed first, then preprints).
+    """
+    blocks = []
+    for t in stats["topics"]:
+        name = t["name"]
+        papers = [
+            p for p in peer_by_topic.get(name, []) + preprint_by_topic.get(name, [])
+            if not p.get("duplicate_of")
+        ]
+        followed = name == FOLLOWED_TOPIC
+        picks = papers if followed else papers[:_TOP_PICKS]
+        if picks or t.get("summary"):
+            label = "★ Followed authors" if followed else name
+            blocks.append({"name": label, "summary": t.get("summary"), "papers": picks})
+    return blocks
 
 
 def _pick_meta(paper: dict) -> str:
-    parts = [paper.get("journal", ""), impact_label(paper), display_date(paper.get("date", ""))]
+    journal = paper.get("journal", "")
+    if journal.endswith(" preprint"):  # 'bioRxiv preprint' repeats the source
+        journal = ""
+    parts = [journal, impact_label(paper), display_date(paper.get("date", ""))]
+    if paper.get("source") != "PubMed":
+        parts.append(paper.get("source", ""))
     return " · ".join(p for p in parts if p)
 
 
-def _plain_body(stats: dict, window: str, picks: dict[str, list[dict]]) -> str:
+def _badge_text(paper: dict) -> str:
+    return "".join(f"[{b.replace('Followed: ', '★ ')}] " for b in badges(paper))
+
+
+def _plain_body(stats: dict, window: str, blocks: list[dict]) -> str:
     lines = ["Literature Digest", window, ""]
 
     name_w = min(max([len(t["name"]) for t in stats["topics"]] + [5]), 50)
@@ -67,24 +99,28 @@ def _plain_body(stats: dict, window: str, picks: dict[str, list[dict]]) -> str:
                       "— results may be incomplete:"]
         lines += [f"  - {w}" for w in stats["warnings"]]
 
-    if any(picks.values()):
-        lines += ["", "TOP PICKS"]
-        for name, papers in picks.items():
-            if not papers:
-                continue
-            lines += ["", name]
-            for i, p in enumerate(papers, 1):
-                lines.append(f"  {i}. {p.get('title', 'Untitled')}")
+    if blocks:
+        lines += ["", "THIS WEEK"]
+        for block in blocks:
+            lines += ["", block["name"].upper()]
+            if block["summary"]:
+                lines.append(block["summary"])
+            for i, p in enumerate(block["papers"], 1):
+                lines.append(f"  {i}. {_badge_text(p)}{p.get('title', 'Untitled')}")
                 lines.append(f"     {_pick_meta(p)}")
+                if p.get("reason"):
+                    lines.append(f"     Why: {p['reason']}")
                 link = paper_link(p)
                 if link:
                     lines.append(f"     {link}")
+                if p.get("oa_url"):
+                    lines.append(f"     Free PDF: {p['oa_url']}")
 
     lines += ["", "The full digest with abstracts is attached (PDF).", "", "— Literature Bot"]
     return "\n".join(lines)
 
 
-def _html_body(stats: dict, window: str, picks: dict[str, list[dict]]) -> str:
+def _html_body(stats: dict, window: str, blocks: list[dict]) -> str:
     cell = "padding:6px 10px;border-bottom:1px solid #e3e8ee;"
     num = cell + "text-align:right;"
     rows = "".join(
@@ -116,30 +152,51 @@ def _html_body(stats: dict, window: str, picks: dict[str, list[dict]]) -> str:
         )
 
     pick_blocks = []
-    for name, papers in picks.items():
-        if not papers:
-            continue
+    for block in blocks:
         items = []
-        for p in papers:
+        for p in block["papers"]:
             title = escape(p.get("title") or "Untitled")
             link = paper_link(p)
             if link:
                 title = (f"<a href='{escape(link, quote=True)}' "
                          f"style='color:{_ACCENT};text-decoration:none;'>{title}</a>")
-            items.append(
-                f"<li style='margin:0 0 8px;'><span style='font-weight:bold;'>{title}</span><br>"
-                f"<span style='color:#666666;font-size:13px;'>{escape(_pick_meta(p))}</span></li>"
+            tags = "".join(
+                "<span style='background:#e3ecf5;color:#2c5f8a;font-size:11px;"
+                f"padding:1px 5px;border-radius:3px;margin-right:4px;'>"
+                f"{escape(b.replace('Followed: ', '★ '))}</span>"
+                for b in badges(p)
             )
+            meta = escape(_pick_meta(p))
+            if p.get("oa_url"):
+                meta += (f" · <a href='{escape(p['oa_url'], quote=True)}' "
+                         "style='color:#2a7a3b;'>Free PDF</a>")
+            reason = ""
+            if p.get("reason"):
+                reason = (f"<br><span style='color:{_ACCENT};font-size:13px;font-style:italic;'>"
+                          f"{escape(p['reason'])}</span>")
+            items.append(
+                f"<li style='margin:0 0 10px;'>{tags}<span style='font-weight:bold;'>{title}</span>"
+                f"<br><span style='color:#666666;font-size:13px;'>{meta}</span>{reason}</li>"
+            )
+        summary = ""
+        if block["summary"]:
+            summary = (
+                f"<p style='background:#f2f6fa;border-left:3px solid {_ACCENT};"
+                "padding:8px 12px;margin:0 0 10px;font-size:14px;'>"
+                f"{escape(block['summary'])}</p>"
+            )
+        papers = f"<ol style='padding-left:20px;margin:0;'>{''.join(items)}</ol>" if items else ""
         pick_blocks.append(
-            f"<h3 style='color:{_ACCENT};font-size:15px;margin:18px 0 6px;'>{escape(name)}</h3>"
-            f"<ol style='padding-left:20px;margin:0;'>{''.join(items)}</ol>"
+            f"<h3 style='color:{_ACCENT};font-size:15px;margin:20px 0 6px;'>"
+            f"{escape(block['name'])}</h3>{summary}{papers}"
         )
     picks_html = ""
     if pick_blocks:
         picks_html = (
-            "<h2 style='font-size:17px;margin:8px 0 0;'>Top picks</h2>"
+            "<h2 style='font-size:17px;margin:8px 0 0;'>This week</h2>"
             "<p style='color:#666666;font-size:13px;margin:2px 0 0;'>"
-            f"Highest-impact journals first, up to {_TOP_PICKS} per topic.</p>"
+            f"Per topic: a short overview and the top {_TOP_PICKS} papers "
+            "(highest-impact journals first). Followed authors are listed in full.</p>"
             + "".join(pick_blocks)
         )
 

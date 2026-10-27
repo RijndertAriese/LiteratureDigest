@@ -10,7 +10,9 @@ from reportlab.platypus import (
 )
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 
-from bot.formatting import date_window, display_date, impact_label, paper_link, plural
+from bot.formatting import (
+    FOLLOWED_TOPIC, badges, date_window, display_date, impact_label, paper_link, plural,
+)
 
 ACCENT = colors.HexColor("#2c5f8a")
 _ABSTRACT_LIMIT = 800
@@ -48,10 +50,12 @@ def build_pdf(
         story += [Spacer(1, 0.4 * cm), _warning_box(stats["warnings"], styles)]
     story.append(Spacer(1, 0.8 * cm))
 
+    summaries = {t["name"]: t.get("summary") for t in stats["topics"]}
     for name, papers in peer_by_topic.items():
+        empty = ("No new peer-reviewed papers by followed authors this period."
+                 if name == FOLLOWED_TOPIC else "No new peer-reviewed papers this period.")
         story.extend(_topic_section(
-            name, papers, peer_anchors, styles,
-            empty_text="No new peer-reviewed papers this period.",
+            name, papers, peer_anchors, styles, empty_text=empty, summary=summaries.get(name),
         ))
 
     if stats["preprint_total"]:
@@ -91,7 +95,7 @@ def _header_line(stats: dict) -> str:
 def _overview_table(stats: dict, anchors: dict[str, str], styles: dict) -> Table:
     show_dropped = bool(stats["min_if"])
     show_off_topic = bool(stats.get("screened"))
-    header = (["Topic", "Peer-reviewed", "Preprints"]
+    header = (["Topic", "Papers", "Preprints"]
               + (["Below IF"] if show_dropped else [])
               + (["Off-topic"] if show_off_topic else []))
     rows = [[Paragraph(f"<b>{h}</b>", styles["cell_head"] if i else styles["cell_head_left"])
@@ -157,6 +161,7 @@ def _topic_section(
     anchors: dict[str, str],
     styles: dict,
     empty_text: str = "No new publications found for this topic.",
+    summary: str | None = None,
 ) -> list:
     unique = [p for p in papers if not p.get("duplicate_of")]
     repeats = [p for p in papers if p.get("duplicate_of")]
@@ -172,6 +177,8 @@ def _topic_section(
         Spacer(1, 0.3 * cm),
     ])
     elements = [heading]
+    if summary:
+        elements += [_summary_box(summary, styles), Spacer(1, 0.35 * cm)]
 
     if not papers:
         elements += [Paragraph(empty_text, styles["empty"]), Spacer(1, 0.5 * cm)]
@@ -194,6 +201,22 @@ def _topic_section(
 
     elements.append(Spacer(1, 0.5 * cm))
     return elements
+
+
+def _summary_box(summary: str, styles: dict) -> Table:
+    box = Table(
+        [[Paragraph(f"<b>This week:</b> {_strip_html(summary)}", styles["summary"])]],
+        colWidths=["100%"],
+    )
+    box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f2f6fa")),
+        ("LINEBEFORE", (0, 0), (0, -1), 2.5, ACCENT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return box
 
 
 def _strip_html(text: str) -> str:
@@ -231,6 +254,9 @@ def _paper_block(paper: dict, index: int, styles: dict) -> list:
         others = ", ".join(_strip_html(t) for t in paper["also_in"])
         elements.append(Paragraph(f"Also matches: {others}", styles["authors"]))
 
+    if paper.get("reason"):
+        elements.append(Paragraph(f"Why: {_strip_html(paper['reason'])}", styles["reason"]))
+
     abstract = _strip_html(_truncate(paper.get("abstract", "")))
     if abstract:
         elements += [Spacer(1, 0.1 * cm), Paragraph(abstract, styles["abstract"])]
@@ -240,7 +266,11 @@ def _paper_block(paper: dict, index: int, styles: dict) -> list:
 
 
 def _meta_line(paper: dict) -> str:
-    """'<i>Journal</i> · IF 12.3 · 15 Oct 2026 · PubMed'."""
+    """'[Review] <i>Journal</i> · IF 12.3 · 15 Oct 2026 · PubMed · Free PDF'."""
+    tags = "".join(
+        f'<font backColor="#e3ecf5" color="#2c5f8a" size="7.5">&nbsp;{_strip_html(b)}&nbsp;</font> '
+        for b in badges(paper)
+    )
     parts = []
     journal = _strip_html(paper.get("journal", ""))
     if journal and not journal.endswith(" preprint"):  # 'bioRxiv preprint' repeats the source
@@ -259,7 +289,9 @@ def _meta_line(paper: dict) -> str:
         parts.append(f'<a href="{escape(url, quote=True)}" color="#2c5f8a">{source}</a>')
     elif source:
         parts.append(source)
-    return " · ".join(parts)
+    if paper.get("oa_url"):
+        parts.append(f'<a href="{escape(paper["oa_url"], quote=True)}" color="#2a7a3b">Free PDF</a>')
+    return tags + " · ".join(parts)
 
 
 def _make_styles() -> dict:
@@ -282,6 +314,10 @@ def _make_styles() -> dict:
         "meta": style("meta", fontSize=9, leading=12,
                       textColor=colors.HexColor("#333333"), spaceAfter=1),
         "authors": style("authors", fontSize=8.5, leading=11, textColor=colors.grey),
+        "reason": style("reason", fontSize=8.5, leading=11, textColor=ACCENT,
+                        fontName="Helvetica-Oblique", spaceBefore=1),
+        "summary": style("summary", fontSize=9.5, leading=13.5,
+                         textColor=colors.HexColor("#333333")),
         "abstract": style("abstract", fontSize=9, leading=13, leftIndent=10,
                           textColor=colors.HexColor("#333333")),
         "body": style("body", fontSize=10, leading=14),

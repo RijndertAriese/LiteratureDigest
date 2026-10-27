@@ -30,6 +30,27 @@ class BuildPdfTest(unittest.TestCase):
             build_pdf(stats, peer, preprints, path)
             self.assertGreater(os.path.getsize(path), 1000)
 
+    def test_builds_with_followed_badges_reasons_summary_and_oa(self):
+        from bot.formatting import FOLLOWED_TOPIC
+        peer = {
+            FOLLOWED_TOPIC: [paper("Own paper", followed=["Ariese HCR"], doi="10.1/own")],
+            "Topic": [
+                paper("Own paper", followed=["Ariese HCR"], doi="10.1/own"),
+                paper("Review & more", impact=8.0, reason="Maps <TAM> states.",
+                      oa_url="https://pmc.example/a?x=1&y=2",
+                      article_types=["Review", "Clinical Trial, Phase I"]),
+            ],
+        }
+        preprints = {FOLLOWED_TOPIC: [paper("Own preprint", source="medRxiv")], "Topic": []}
+        mark_cross_topic_duplicates(peer, preprints)
+        stats = stats_for(peer, preprints)
+        stats["topics"][1]["summary"] = "Two themes: TAMs & imaging."
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "digest.pdf")
+            build_pdf(stats, peer, preprints, path)
+            self.assertGreater(os.path.getsize(path), 1000)
+
     def test_truncate_cuts_on_word_boundary(self):
         text = "word " * 300
         cut = _truncate(text, 50)

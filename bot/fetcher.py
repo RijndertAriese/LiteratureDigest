@@ -5,6 +5,8 @@ import requests
 import arxiv
 from Bio import Entrez
 
+from bot.authors import matches_followed
+
 Entrez.email = (
     os.environ.get("NCBI_EMAIL")
     or os.environ.get("SENDER_EMAIL")
@@ -86,11 +88,14 @@ def fetch_pubmed(
             title = str(art.get("ArticleTitle", ""))
             abstract = _pubmed_abstract(art.get("Abstract", {}).get("AbstractText", []))
 
-            authors_list = art.get("AuthorList", [])
-            authors = _format_authors([
+            article_types = _pubmed_article_types(art)
+            if _NON_PAPER_TYPES.intersection(article_types):
+                continue
+
+            author_list = [
                 f"{a.get('LastName', '')} {a.get('Initials', '')}".strip()
-                for a in authors_list if "LastName" in a
-            ])
+                for a in art.get("AuthorList", []) if "LastName" in a
+            ]
 
             journal = art.get("Journal", {}).get("Title", "")
             published_on = _pubmed_exact_publication_date(article)
@@ -102,7 +107,9 @@ def fetch_pubmed(
             papers.append({
                 "source": "PubMed",
                 "title": title,
-                "authors": authors,
+                "authors": _format_authors(author_list),
+                "author_list": author_list,
+                "article_types": article_types,
                 "journal": journal,
                 "date": published_on.isoformat(),
                 "abstract": abstract,
@@ -115,6 +122,21 @@ def fetch_pubmed(
             continue
 
     return papers
+
+
+# PubMed publication types that are notices about papers, not papers.
+_NON_PAPER_TYPES = {
+    "Erratum", "Published Erratum", "Comment", "Editorial", "News", "Newspaper Article",
+    "Retraction of Publication", "Retraction Notice", "Expression of Concern",
+    "Biography", "Portrait", "Interview",
+}
+
+
+def _pubmed_article_types(art: dict) -> list[str]:
+    try:
+        return [str(t) for t in art.get("PublicationTypeList", [])]
+    except Exception:
+        return []
 
 
 def _pubmed_exact_publication_date(article: dict) -> datetime.date | None:
@@ -237,6 +259,8 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
             "source": "arXiv",
             "title": result.title,
             "authors": _format_authors([str(a) for a in result.authors]),
+            "author_list": [str(a) for a in result.authors],
+            "article_types": [],
             "journal": result.journal_ref or "arXiv preprint",
             "date": result.published.date().isoformat(),
             "abstract": result.summary.replace("\n", " "),
@@ -249,20 +273,21 @@ def fetch_arxiv(keyword: str, days: int, max_results: int) -> list[dict]:
 
 # ── bioRxiv ───────────────────────────────────────────────────────────────────
 
-_BIORXIV_PAGE_CACHE: dict[tuple[str, str], list[dict]] = {}
+_RXIV_SERVERS = {"biorxiv": "bioRxiv", "medrxiv": "medRxiv"}
+_RXIV_PAGE_CACHE: dict[tuple[str, str, str], list[dict]] = {}
 
 
-def _biorxiv_window(since: str, today: str) -> list[dict]:
-    """All bioRxiv preprints posted in [since, today], fetched once per run."""
-    key = (since, today)
-    if key in _BIORXIV_PAGE_CACHE:
-        return _BIORXIV_PAGE_CACHE[key]
+def _rxiv_window(server: str, since: str, today: str) -> list[dict]:
+    """All preprints posted on bioRxiv/medRxiv in [since, today], fetched once per run."""
+    key = (server, since, today)
+    if key in _RXIV_PAGE_CACHE:
+        return _RXIV_PAGE_CACHE[key]
 
     items: list[dict] = []
     cursor = 0
     while True:
         resp = requests.get(
-            f"https://api.biorxiv.org/details/biorxiv/{since}/{today}/{cursor}/json",
+            f"https://api.biorxiv.org/details/{server}/{since}/{today}/{cursor}/json",
             timeout=30,
         )
         resp.raise_for_status()
@@ -278,46 +303,76 @@ def _biorxiv_window(since: str, today: str) -> list[dict]:
             break
         time.sleep(0.3)
 
-    _BIORXIV_PAGE_CACHE[key] = items
+    _RXIV_PAGE_CACHE[key] = items
     return items
 
 
-def _biorxiv_matches(text: str, groups: list[list[str]]) -> bool:
+def _rxiv_matches(text: str, groups: list[list[str]]) -> bool:
     """True if every term of at least one keyword group occurs in ``text``."""
     text = text.lower()
     return any(group and all(term.lower() in text for term in group) for group in groups)
 
 
-def fetch_biorxiv(groups: list[list[str]], days: int, max_results: int) -> list[dict]:
-    """bioRxiv preprints from the last ``days`` days matching any keyword group."""
+def _rxiv_papers(server: str, days: int, max_results: int, keep) -> list[dict]:
+    """Preprints from the server's window for which ``keep(paper)`` is true."""
     since = _date_n_days_ago(days).strftime("%Y-%m-%d")
     today = datetime.date.today().strftime("%Y-%m-%d")
+    label = _RXIV_SERVERS[server]
 
     papers = []
     seen: set[str] = set()
-    for item in _biorxiv_window(since, today):
+    for item in _rxiv_window(server, since, today):
         doi = item.get("doi", "")
         # Revised preprints appear once per version; keep the first.
         if doi in seen:
             continue
-        text = f"{item.get('title', '')} {item.get('abstract', '')}"
-        if not _biorxiv_matches(text, groups):
-            continue
-        seen.add(doi)
-        papers.append({
-            "source": "bioRxiv",
+        author_list = [a.strip() for a in item.get("authors", "").split(";") if a.strip()]
+        paper = {
+            "source": label,
             "title": item.get("title", ""),
-            "authors": _format_authors(item.get("authors", "").split("; ")),
-            "journal": "bioRxiv preprint",
+            "authors": _format_authors(author_list),
+            "author_list": author_list,
+            "article_types": [],
+            "journal": f"{label} preprint",
             "date": item.get("date", ""),
             "abstract": item.get("abstract", ""),
             "doi": doi,
             "url": f"https://doi.org/{doi}" if doi else "",
-        })
+        }
+        if not keep(paper):
+            continue
+        seen.add(doi)
+        papers.append(paper)
         if len(papers) >= max_results:
             break
 
     return papers
+
+
+def fetch_rxiv(server: str, groups: list[list[str]], days: int, max_results: int) -> list[dict]:
+    """bioRxiv / medRxiv preprints from the last ``days`` days matching any keyword group."""
+    return _rxiv_papers(
+        server, days, max_results,
+        lambda p: _rxiv_matches(f"{p['title']} {p['abstract']}", groups),
+    )
+
+
+# ── followed authors ──────────────────────────────────────────────────────────
+
+def fetch_followed(
+    authors: list[str], days: int, max_results: int, max_age_days: int | None = None
+) -> tuple[list[dict], list[str]]:
+    """New papers and preprints by any followed author (PubMed, bioRxiv, medRxiv)."""
+    query = " OR ".join(f'"{a}"[au]' for a in authors)
+    jobs = [("fetch_pubmed", lambda: fetch_pubmed(query, days, max_results, max_age_days))]
+    for server in _RXIV_SERVERS:
+        jobs.append((
+            f"fetch_{server}",
+            lambda server=server: _rxiv_papers(
+                server, days, max_results, lambda p: bool(matches_followed(p, authors))
+            ),
+        ))
+    return _run_jobs(jobs, "Followed authors")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -356,28 +411,35 @@ def fetch_all(
 ) -> tuple[list[dict], list[str]]:
     """
     queries: dict from query_translator — "pubmed" and "arxiv" are lists of
-             query strings, "biorxiv" a list of keyword groups. Results of all
-             variants are merged and de-duplicated.
+             query strings, "biorxiv" a list of keyword groups (also used for
+             medRxiv). Results of all variants are merged and de-duplicated.
 
     Returns (papers, warnings) so callers can surface fetch failures in the digest.
     """
-    display = queries.get("display", "")
     jobs = [
-        ("fetch_pubmed", lambda q: fetch_pubmed(q, days, max_results, max_age_days), q)
+        ("fetch_pubmed", lambda q=q: fetch_pubmed(q, days, max_results, max_age_days))
         for q in queries.get("pubmed", [])
     ] + [
-        ("fetch_arxiv", lambda q: fetch_arxiv(q, days, max_results), q)
+        ("fetch_arxiv", lambda q=q: fetch_arxiv(q, days, max_results))
         for q in queries.get("arxiv", [])
     ]
-    if queries.get("biorxiv"):
-        groups = queries["biorxiv"]
-        jobs.append(("fetch_biorxiv", lambda q: fetch_biorxiv(q, days, max_results), groups))
+    groups = queries.get("biorxiv")
+    if groups:
+        for server in _RXIV_SERVERS:
+            jobs.append((
+                f"fetch_{server}",
+                lambda server=server: fetch_rxiv(server, groups, days, max_results),
+            ))
+    return _run_jobs(jobs, queries.get("display", ""))
 
+
+def _run_jobs(jobs: list, display: str) -> tuple[list[dict], list[str]]:
+    """Run ``(name, fn)`` fetch jobs; merge, de-duplicate and collect warnings."""
     results = []
     warnings = []
-    for name, fn, query in jobs:
+    for name, fn in jobs:
         try:
-            results.extend(fn(query))
+            results.extend(fn())
         except Exception as e:
             msg = _fetch_warning(name, display, e)
             print(f"[warn] {msg}")

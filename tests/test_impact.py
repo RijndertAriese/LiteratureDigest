@@ -25,6 +25,7 @@ def _fake_openalex(url, params=None, timeout=None):
                 {
                     "doi": "https://doi.org/10.1/high",
                     "primary_location": {"source": {"id": "https://openalex.org/S_HIGH"}},
+                    "open_access": {"is_oa": True, "oa_url": "https://pmc.example/high.pdf"},
                 },
                 {
                     "doi": "https://doi.org/10.1/low",
@@ -59,6 +60,8 @@ class ImpactTest(unittest.TestCase):
 
         self.assertAlmostEqual(papers[0]["impact_factor"], 12.5)
         self.assertAlmostEqual(papers[1]["impact_factor"], 1.2)
+        self.assertEqual(papers[0]["oa_url"], "https://pmc.example/high.pdf")
+        self.assertIsNone(papers[1]["oa_url"])
 
     def test_unknown_journal_is_none_not_error(self):
         papers = [{"doi": "", "journal": "Journal of Nowhere"}]

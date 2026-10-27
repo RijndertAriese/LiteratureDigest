@@ -17,7 +17,7 @@ class ScreenPapersTest(unittest.TestCase):
     def test_keeps_only_relevant_numbers_per_batch(self):
         client = mock.Mock()
         client.chat.completions.create.side_effect = [
-            _response('{"relevant": [1, "3", 99]}'),
+            _response('{"relevant": [{"id": 1, "reason": "Shows X."}, "3", 99]}'),
             _response('{"relevant": [2]}'),
         ]
         with mock.patch.dict(os.environ, {"GROQ_API_KEY": "k"}), \
@@ -25,6 +25,8 @@ class ScreenPapersTest(unittest.TestCase):
             kept, rejected, complete = screen.screen_papers("topic", self.papers)
 
         self.assertEqual([p["title"] for p in kept], ["P1", "P3", "P14"])
+        self.assertEqual(kept[0]["reason"], "Shows X.")
+        self.assertNotIn("reason", kept[1])
         self.assertEqual(rejected, 12)
         self.assertTrue(complete)
 
@@ -47,6 +49,32 @@ class ScreenPapersTest(unittest.TestCase):
             kept, rejected, complete = screen.screen_papers("topic", self.papers)
         self.assertEqual(len(kept), 15)
         self.assertEqual(rejected, 0)
+
+
+class SummariseTopicTest(unittest.TestCase):
+    papers = [{"title": "P1", "reason": "Shows X."}]
+
+    def test_returns_summary_text(self):
+        client = mock.Mock()
+        client.chat.completions.create.return_value = _response('{"summary": "Two themes."}')
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "k"}), \
+                mock.patch.object(screen, "Groq", return_value=client):
+            self.assertEqual(screen.summarise_topic("t", self.papers), "Two themes.")
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("P1 — Shows X.", prompt)
+
+    def test_fails_open(self):
+        client = mock.Mock()
+        client.chat.completions.create.side_effect = RuntimeError("down")
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "k"}), \
+                mock.patch.object(screen, "Groq", return_value=client):
+            self.assertIsNone(screen.summarise_topic("t", self.papers))
+
+    def test_skipped_without_papers_or_key(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(screen.summarise_topic("t", self.papers))
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "k"}):
+            self.assertIsNone(screen.summarise_topic("t", []))
 
 
 if __name__ == "__main__":
