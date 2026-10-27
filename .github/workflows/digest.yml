@@ -24,7 +24,7 @@ jobs:
       - name: Run tests
         run: python -m unittest discover
 
-      - name: Run literature bot
+      - name: Run LiteratureDigest
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}

@@ -11,7 +11,7 @@ Entrez.email = (
     os.environ.get("NCBI_EMAIL")
     or os.environ.get("SENDER_EMAIL")
     or os.environ.get("SMTP_USER")
-    or "literature-bot@example.com"
+    or "literaturedigest@example.com"
 )
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY")
 if NCBI_API_KEY:

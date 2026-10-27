@@ -116,7 +116,7 @@ def _plain_body(stats: dict, window: str, blocks: list[dict]) -> str:
                 if p.get("oa_url"):
                     lines.append(f"     Free PDF: {p['oa_url']}")
 
-    lines += ["", "The full digest with abstracts is attached (PDF).", "", "— Literature Bot"]
+    lines += ["", "The full digest with abstracts is attached (PDF).", "", "— LiteratureDigest"]
     return "\n".join(lines)
 
 
@@ -207,7 +207,7 @@ def _html_body(stats: dict, window: str, blocks: list[dict]) -> str:
         f"<p style='color:#666666;margin:4px 0 0;'>{escape(window)}</p>"
         f"{table}{warning_block}{picks_html}"
         "<p style='margin:24px 0 0;font-size:13px;color:#666666;'>"
-        "The full digest with abstracts is attached (PDF).<br>— Literature Bot</p>"
+        "The full digest with abstracts is attached (PDF).<br>— LiteratureDigest</p>"
         "</div>"
     )
 

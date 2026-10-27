@@ -1,11 +1,11 @@
 #!/bin/bash
-# Triggers the literature_bot GitHub Actions workflow (optional backup for the
+# Triggers the LiteratureDigest GitHub Actions workflow (optional backup for the
 # workflow's own cron schedule). Can be run by launchd every Monday at 08:00.
 #
 # Uses the GitHub CLI, which keeps its credentials in the macOS Keychain, so no
 # token file is needed. One-time setup: `gh auth login`.
 
-REPO="RijndertAriese/literature_bot"
+REPO="RijndertAriese/LiteratureDigest"
 WORKFLOW="digest.yml"
 LOG_FILE="$(dirname "$0")/trigger_workflow.log"
 

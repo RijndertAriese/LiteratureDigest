@@ -1,6 +1,6 @@
 # LiteratureDigest
 
-A weekly literature digest bot that searches PubMed, arXiv, and bioRxiv for new publications matching your research topics, and emails you a formatted PDF.
+A weekly literature digest that searches PubMed, arXiv, bioRxiv and medRxiv for new publications matching your research topics and followed labs, screens them for relevance, and emails you a summary with a formatted PDF.
 
 ## How it works
 
@@ -121,15 +121,15 @@ repo. One-time setup:
 
 ```bash
 gh auth login
-cp com.literature-bot.trigger.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.literature-bot.trigger.plist
+cp com.literaturedigest.trigger.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.literaturedigest.trigger.plist
 ```
 
 ## Project structure
 
 ```
 bot/
-  fetcher.py         # PubMed, arXiv, bioRxiv API queries
+  fetcher.py         # PubMed, arXiv, bioRxiv, medRxiv API queries
   query_translator.py # plain-English → query variants per source (Groq)
   screen.py          # Groq relevance screen, why-lines and weekly topic summaries
   authors.py         # followed-author name matching across sources

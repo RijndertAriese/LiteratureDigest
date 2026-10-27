@@ -33,7 +33,7 @@ def build_pdf(
         topMargin=2.2 * cm,
         bottomMargin=2.2 * cm,
         title=f"Literature Digest — {today}",
-        author="Literature Bot",
+        author="LiteratureDigest",
     )
 
     styles = _make_styles()
