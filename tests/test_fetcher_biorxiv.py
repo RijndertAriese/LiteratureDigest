@@ -39,6 +39,22 @@ class RxivTest(unittest.TestCase):
         self.assertEqual(len(first), 30)
         self.assertEqual(len(second), 15)
 
+    def test_retries_timed_out_page(self):
+        page = _page([_item("10.1/x", "glioma")], 1)
+        timeout = fetcher.requests.exceptions.Timeout("read timed out")
+        with mock.patch.object(fetcher.requests, "get", side_effect=[timeout, page]) as get, \
+                mock.patch.object(fetcher.time, "sleep"):
+            papers = fetcher.fetch_rxiv("biorxiv", [["glioma"]], 7, 10)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(len(papers), 1)
+
+    def test_gives_up_after_retries(self):
+        timeout = fetcher.requests.exceptions.Timeout("read timed out")
+        with mock.patch.object(fetcher.requests, "get", side_effect=timeout), \
+                mock.patch.object(fetcher.time, "sleep"):
+            with self.assertRaises(fetcher.requests.exceptions.Timeout):
+                fetcher.fetch_rxiv("biorxiv", [["glioma"]], 7, 10)
+
     def test_skips_repeated_versions_of_same_preprint(self):
         page = _page([_item("10.1/x", "glioma v1"), _item("10.1/x", "glioma v2")], 2)
         with mock.patch.object(fetcher.requests, "get", return_value=page):

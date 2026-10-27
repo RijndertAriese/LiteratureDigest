@@ -286,12 +286,7 @@ def _rxiv_window(server: str, since: str, today: str) -> list[dict]:
     items: list[dict] = []
     cursor = 0
     while True:
-        resp = requests.get(
-            f"https://api.biorxiv.org/details/{server}/{since}/{today}/{cursor}/json",
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        data = _rxiv_page(f"https://api.biorxiv.org/details/{server}/{since}/{today}/{cursor}/json")
         collection = data.get("collection", [])
         if not collection:
             break
@@ -305,6 +300,25 @@ def _rxiv_window(server: str, since: str, today: str) -> list[dict]:
 
     _RXIV_PAGE_CACHE[key] = items
     return items
+
+
+_RXIV_RETRIES = 4
+
+
+def _rxiv_page(url: str) -> dict:
+    """One API page; the bioRxiv API times out now and then, so retry with backoff."""
+    for attempt in range(_RXIV_RETRIES):
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                requests.exceptions.HTTPError) as e:
+            if attempt == _RXIV_RETRIES - 1:
+                raise
+            wait = 5 * 2 ** attempt
+            print(f"[rxiv] page request failed ({type(e).__name__}); retrying in {wait}s")
+            time.sleep(wait)
 
 
 def _rxiv_matches(text: str, groups: list[list[str]]) -> bool:
