@@ -36,11 +36,25 @@ def author_key(name: str) -> tuple[str, str] | None:
     return (_plain(last), letters[:1])
 
 
-def matches_followed(paper: dict, followed: list[str]) -> list[str]:
-    """Followed names (as written in config) that are authors of ``paper``."""
+def matches_followed(
+    paper: dict, followed: list[str], first: int | None = None, last: int | None = None
+) -> list[str]:
+    """
+    Followed names (as written in config) that are authors of ``paper``.
+
+    With ``first`` / ``last`` set, only the first ``first`` and last ``last``
+    authors count, so middle-author contributions are ignored. ``None`` for
+    both means any position.
+    """
+    names = paper.get("author_list", [])
+    if first is not None or last is not None:
+        n = len(names)
+        keep = set(range(min(first or 0, n))) | set(range(max(n - (last or 0), 0), n))
+        names = [name for i, name in enumerate(names) if i in keep]
+
     wanted = {author_key(f): f for f in followed if author_key(f)}
     hits = []
-    for name in paper.get("author_list", []):
+    for name in names:
         key = author_key(name)
         if key in wanted and wanted[key] not in hits:
             hits.append(wanted[key])

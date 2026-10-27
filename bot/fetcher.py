@@ -360,16 +360,25 @@ def fetch_rxiv(server: str, groups: list[list[str]], days: int, max_results: int
 # ── followed authors ──────────────────────────────────────────────────────────
 
 def fetch_followed(
-    authors: list[str], days: int, max_results: int, max_age_days: int | None = None
+    authors: list[str],
+    days: int,
+    max_results: int,
+    max_age_days: int | None = None,
+    first: int | None = None,
+    last: int | None = None,
 ) -> tuple[list[dict], list[str]]:
-    """New papers and preprints by any followed author (PubMed, bioRxiv, medRxiv)."""
+    """
+    New papers and preprints by any followed author (PubMed, bioRxiv, medRxiv).
+    Preprints are filtered on author position here; PubMed hits come from an
+    author search, so callers apply the same ``matches_followed`` check.
+    """
     query = " OR ".join(f'"{a}"[au]' for a in authors)
     jobs = [("fetch_pubmed", lambda: fetch_pubmed(query, days, max_results, max_age_days))]
     for server in _RXIV_SERVERS:
         jobs.append((
             f"fetch_{server}",
             lambda server=server: _rxiv_papers(
-                server, days, max_results, lambda p: bool(matches_followed(p, authors))
+                server, days, max_results, lambda p: bool(matches_followed(p, authors, first, last))
             ),
         ))
     return _run_jobs(jobs, "Followed authors")

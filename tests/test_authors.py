@@ -29,5 +29,17 @@ class MatchesFollowedTest(unittest.TestCase):
         self.assertEqual(matches_followed(paper, ["Ariese HCR"]), [])
 
 
+    def test_position_limits_ignore_middle_authors(self):
+        paper = {"author_list": ["A A", "B B", "Monje M", "D D", "E E", "F F", "G G"]}
+        self.assertEqual(matches_followed(paper, ["Monje M"], first=3, last=3), ["Monje M"])
+        self.assertEqual(matches_followed(paper, ["Monje M"], first=2, last=3), [])
+        self.assertEqual(matches_followed(paper, ["F F"], first=2, last=2), ["F F"])
+        self.assertEqual(matches_followed(paper, ["D D"], first=3, last=3), [])
+
+    def test_short_author_list_counts_everyone(self):
+        paper = {"author_list": ["Monje M", "Suva ML"]}
+        self.assertEqual(matches_followed(paper, ["Suva ML"], first=3, last=3), ["Suva ML"])
+
+
 if __name__ == "__main__":
     unittest.main()

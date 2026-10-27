@@ -86,6 +86,15 @@ def validate_config(cfg: dict) -> None:
     if not isinstance(followed, list) or not all(isinstance(a, str) and a.strip() for a in followed):
         errors.append("config.yaml: 'followed_authors' must be a list of names, e.g. \"Ariese HCR\"")
 
+    positions = cfg.get("followed_author_positions", {"first": 3, "last": 3})
+    if not isinstance(positions, dict) or not all(
+        isinstance(positions.get(k, 0), int) and not isinstance(positions.get(k, 0), bool)
+        and positions.get(k, 0) >= 0
+        for k in ("first", "last")
+    ):
+        errors.append("config.yaml: 'followed_author_positions' needs non-negative integers "
+                      "'first' and 'last'")
+
     allow = cfg.get("always_include_journals", [])
     if not isinstance(allow, list) or not all(isinstance(s, str) for s in allow):
         errors.append("config.yaml: 'always_include_journals' must be a list of strings")
@@ -242,6 +251,8 @@ def main() -> None:
     min_if: float = float(cfg.get("min_impact_factor", 0) or 0)
     always_include: list[str] = [s.lower() for s in cfg.get("always_include_journals", [])]
     followed: list[str] = [a.strip() for a in cfg.get("followed_authors", [])]
+    positions = cfg.get("followed_author_positions", {"first": 3, "last": 3})
+    first_n, last_n = positions.get("first", 0), positions.get("last", 0)
     recipient: str = cfg["recipient_email"]
 
     filter_note = f", impact factor ≥ {min_if:g}" if min_if else ""
@@ -257,11 +268,17 @@ def main() -> None:
     warnings: list[str] = []
 
     if followed:
-        print(f"\n[followed] {', '.join(followed)}")
-        papers, followed_warnings = fetch_followed(followed, days, max_results, max_age)
+        print(f"\n[followed] {', '.join(followed)} (first {first_n} or last {last_n} authors)")
+        papers, followed_warnings = fetch_followed(
+            followed, days, max_results, max_age, first_n, last_n
+        )
         warnings.extend(followed_warnings)
         for p in papers:
-            p["followed"] = matches_followed(p, followed)
+            p["followed"] = matches_followed(p, followed, first_n, last_n)
+        middle = [p for p in papers if not p["followed"]]
+        papers = [p for p in papers if p["followed"]]
+        for p in middle:
+            print(f"        [middle author] {p.get('title', '').strip()[:110]}")
         peer = [p for p in papers if p["source"] not in PREPRINT_SOURCES]
         annotate_impact(peer)
         peer_by_topic[FOLLOWED_TOPIC] = _newest_first(peer)
@@ -286,7 +303,7 @@ def main() -> None:
         papers, topic_warnings = fetch_all(queries, days, max_results, max_age)
         warnings.extend(topic_warnings)
         for p in papers:
-            p["followed"] = matches_followed(p, followed)
+            p["followed"] = matches_followed(p, followed, first_n, last_n)
 
         off_topic = 0
         if screen:

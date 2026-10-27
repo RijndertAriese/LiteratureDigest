@@ -36,6 +36,7 @@ relevance_screen: true    # Groq drops off-topic hits (needs GROQ_API_KEY)
 min_impact_factor: 3.5   # drop peer-reviewed papers below this; 0 disables
 always_include_journals: ["Neuro-Oncology"]  # exempt from the IF filter
 followed_authors: ["Ariese HCR"]  # always included, marked ★ (last name + initials)
+followed_author_positions: {first: 3, last: 3}  # only count lead/senior authorship
 recipient_email: "you@example.com"  # overridden by RECIPIENT_EMAIL secret
 ```
 

@@ -73,4 +73,10 @@ followed_authors:
   - "Arlotta P"      # Paola Arlotta
   - "Linnarsson S"   # Sten Linnarsson
 
+# A followed researcher only counts when among the first / last N authors
+# (lead or senior author), so middle-author contributions are left out.
+followed_author_positions:
+  first: 3
+  last: 3
+
 recipient_email: "your@email.com"  # override with RECIPIENT_EMAIL secret
